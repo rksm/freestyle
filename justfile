@@ -49,6 +49,20 @@ format:
 eval-context *ARGS:
     node scripts/eval-context/run.mjs {{ARGS}}
 
+# Install the built AppImage to the stable path the NixOS launcher and
+# desktop item point at (/etc/nixos/shared/linux/freestyle.nix).
+install-appimage:
+    #!/usr/bin/env sh
+    set -e
+    appimage=$(ls apps/electron/dist/Freestyle-*.AppImage 2>/dev/null | head -1)
+    if [ -z "$appimage" ]; then
+        echo "No AppImage in apps/electron/dist - run 'just release' first" >&2
+        exit 1
+    fi
+    cp "$appimage" Freestyle.AppImage
+    chmod +x Freestyle.AppImage
+    echo "Installed $appimage -> Freestyle.AppImage"
+
 # Sync the FocusBridge GNOME extension into the NixOS config repo
 # (installed system-wide via /etc/nixos/shared/linux-home/gnome.nix;
 # apply with `just switch` there, then log out/in to reload GNOME Shell).
