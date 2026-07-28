@@ -164,6 +164,9 @@ export default function SettingsPage(): React.JSX.Element {
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [showOnLaunch, setShowOnLaunch] = useState(true);
   const [advancedMode, setAdvancedMode] = useState(false);
+  const [contextEnabled, setContextEnabled] = useState(true);
+  const [contextToAsr, setContextToAsr] = useState(true);
+  const [contextToCleanup, setContextToCleanup] = useState(true);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(() =>
     parseSettingsSection(window.location.hash),
   );
@@ -355,6 +358,10 @@ export default function SettingsPage(): React.JSX.Element {
     if (s[SETTINGS_KEYS.soundEnabled] === "false") setSoundEnabled(false);
     if (s[SETTINGS_KEYS.historyPaused] === "true") setHistoryPaused(true);
     if (s[SETTINGS_KEYS.advancedMode] === "true") setAdvancedMode(true);
+    if (s[SETTINGS_KEYS.contextEnabled] === "false") setContextEnabled(false);
+    if (s[SETTINGS_KEYS.contextToAsr] === "false") setContextToAsr(false);
+    if (s[SETTINGS_KEYS.contextToCleanup] === "false")
+      setContextToCleanup(false);
 
     const retentionDays = parseRetentionDays(
       s[SETTINGS_KEYS.historyRetentionDays],
@@ -559,6 +566,36 @@ export default function SettingsPage(): React.JSX.Element {
     },
     [queryClient],
   );
+
+  const handleContextEnabledToggle = useCallback((enabled: boolean) => {
+    setContextEnabled(enabled);
+    getClient()
+      .api.settings[":key"].$put({
+        param: { key: SETTINGS_KEYS.contextEnabled },
+        json: { value: String(enabled) },
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleContextToAsrToggle = useCallback((enabled: boolean) => {
+    setContextToAsr(enabled);
+    getClient()
+      .api.settings[":key"].$put({
+        param: { key: SETTINGS_KEYS.contextToAsr },
+        json: { value: String(enabled) },
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleContextToCleanupToggle = useCallback((enabled: boolean) => {
+    setContextToCleanup(enabled);
+    getClient()
+      .api.settings[":key"].$put({
+        param: { key: SETTINGS_KEYS.contextToCleanup },
+        json: { value: String(enabled) },
+      })
+      .catch(() => {});
+  }, []);
 
   const clearHistory = useCallback(async () => {
     if (!confirm(t("settings.data.clearHistoryConfirm"))) {
@@ -984,6 +1021,43 @@ export default function SettingsPage(): React.JSX.Element {
                   />
                 </Row>
               ) : null}
+              <div className="mt-8">
+                <h3 className="text-foreground mb-2 text-sm font-medium">
+                  Context
+                </h3>
+                <SettingsPanel>
+                  <Row
+                    label="Context capture"
+                    desc="Capture nearby desktop context for each dictation."
+                  >
+                    <Switch
+                      checked={contextEnabled}
+                      onCheckedChange={handleContextEnabledToggle}
+                    />
+                  </Row>
+                  <Row
+                    label="Use context for recognition"
+                    desc="Use captured terms to improve speech recognition."
+                  >
+                    <Switch
+                      checked={contextToAsr}
+                      disabled={!contextEnabled}
+                      onCheckedChange={handleContextToAsrToggle}
+                    />
+                  </Row>
+                  <Row
+                    label="Use context for cleanup"
+                    desc="Use captured context to preserve exact spellings during cleanup."
+                    last
+                  >
+                    <Switch
+                      checked={contextToCleanup}
+                      disabled={!contextEnabled}
+                      onCheckedChange={handleContextToCleanupToggle}
+                    />
+                  </Row>
+                </SettingsPanel>
+              </div>
             </SettingsPanel>
           )}
 

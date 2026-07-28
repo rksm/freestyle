@@ -1014,12 +1014,85 @@ async function getWindowsOpenAppCandidates(): Promise<OpenAppCandidate[]> {
 async function getLinuxFrontmostApp(): Promise<string | null> {
   if (isWaylandSession()) {
     return (
+      (await getFreestyleFocusBridgeApp()) ??
+      (await getVibeTyperFocusBridgeApp()) ??
       (await getSwayFrontmostApp()) ??
       (await getGnomeFrontmostApp()) ??
       (await getLinuxX11FrontmostApp())
     );
   }
   return getLinuxX11FrontmostApp();
+}
+
+interface FocusBridgeWindow {
+  app?: unknown;
+  appId?: unknown;
+  name?: unknown;
+  title?: unknown;
+  wmClass?: unknown;
+}
+
+function readFocusBridgeString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function unwrapGdbusString(output: string): string | null {
+  const match = /^\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*\)$/.exec(output);
+  return match?.[1]?.replace(/\\(['\\])/g, "$1") ?? null;
+}
+
+async function getFocusBridgeApp(
+  busName: string,
+  objectPath: string,
+): Promise<string | null> {
+  try {
+    const output = await execAsync(
+      "gdbus",
+      [
+        "call",
+        "--session",
+        "--dest",
+        busName,
+        "--object-path",
+        objectPath,
+        "--method",
+        `${busName}.GetActiveWindow`,
+      ],
+      2000,
+    );
+    const json = unwrapGdbusString(output);
+    if (!json) return null;
+
+    const focused = JSON.parse(json) as FocusBridgeWindow;
+    const app =
+      readFocusBridgeString(focused.wmClass) ??
+      readFocusBridgeString(focused.app) ??
+      readFocusBridgeString(focused.appId) ??
+      readFocusBridgeString(focused.name);
+    const windowTitle = readFocusBridgeString(focused.title);
+    if (!app && !windowTitle) return null;
+
+    return JSON.stringify({
+      app: app ?? "Unknown",
+      windowTitle: windowTitle ?? "",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function getFreestyleFocusBridgeApp(): Promise<string | null> {
+  return getFocusBridgeApp(
+    "com.freestyle.FocusBridge",
+    "/com/freestyle/FocusBridge",
+  );
+}
+
+async function getVibeTyperFocusBridgeApp(): Promise<string | null> {
+  return getFocusBridgeApp(
+    "com.vibetyper.FocusBridge",
+    "/com/vibetyper/FocusBridge",
+  );
 }
 
 interface SwayNode {
