@@ -48,3 +48,12 @@ format:
 # Run the context evaluation matrix against a running app (see scripts/eval-context/README.md).
 eval-context *ARGS:
     node scripts/eval-context/run.mjs {{ARGS}}
+
+# Sync the FocusBridge GNOME extension into the NixOS config repo
+# (installed system-wide via /etc/nixos/shared/linux-home/gnome.nix;
+# apply with `just switch` there, then log out/in to reload GNOME Shell).
+sync-gnome-extension:
+    cp integrations/gnome-focus-bridge/extension.js \
+       integrations/gnome-focus-bridge/metadata.json \
+       integrations/gnome-focus-bridge/README.md \
+       /etc/nixos/packages/freestyle-focus-bridge/
