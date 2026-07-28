@@ -15,6 +15,7 @@
               # pnpm is pinned via package.json#packageManager; corepack
               # provides the matching version on demand.
               pkgs.corepack
+              pkgs.just
             ];
           };
         }
