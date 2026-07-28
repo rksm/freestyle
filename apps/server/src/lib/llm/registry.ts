@@ -1,4 +1,5 @@
 import type { GroqLanguageModelOptions } from "@ai-sdk/groq";
+import type { OpenAILanguageModelChatOptions } from "@ai-sdk/openai";
 import type { PostProcessParams } from "@freestyle-voice/stt";
 import type { LanguageModel } from "ai";
 import { getDb } from "../db.js";
@@ -9,6 +10,10 @@ import {
 
 /** The provider-options shape accepted by the cleanup `generateText` call. */
 type CleanupProviderOptions = NonNullable<PostProcessParams["providerOptions"]>;
+
+const OPENAI_PREWARM_DEBOUNCE_MS = 30_000;
+const OPENAI_PREWARM_TIMEOUT_MS = 5_000;
+let lastOpenAIPrewarmAt: number | null = null;
 
 /**
  * A cleanup/post-processing LLM backend. Mirrors the transcription
@@ -38,6 +43,37 @@ export interface LlmProvider {
 
 function stripGroqPrefix(modelId: string): string {
   return modelId.startsWith("groq/") ? modelId.slice("groq/".length) : modelId;
+}
+
+function stripOpenAIPrefix(modelId: string): string {
+  return modelId.startsWith("openai/")
+    ? modelId.slice("openai/".length)
+    : modelId;
+}
+
+export function openaiCleanupProviderOptions(
+  modelId: string,
+): { openai: OpenAILanguageModelChatOptions } | undefined {
+  if (!stripOpenAIPrefix(modelId).startsWith("gpt-5")) return undefined;
+  return { openai: { reasoningEffort: "none" } };
+}
+
+/** Warm OpenAI's pooled TLS connection while the user is still speaking. */
+function prewarmOpenAIConnection(): void {
+  const now = Date.now();
+  if (
+    lastOpenAIPrewarmAt !== null &&
+    now - lastOpenAIPrewarmAt < OPENAI_PREWARM_DEBOUNCE_MS
+  )
+    return;
+  lastOpenAIPrewarmAt = now;
+
+  void fetch("https://api.openai.com", {
+    keepalive: true,
+    signal: AbortSignal.timeout(OPENAI_PREWARM_TIMEOUT_MS),
+  })
+    .then((response) => response.arrayBuffer())
+    .catch(() => {});
 }
 
 /**
@@ -77,6 +113,8 @@ const PROVIDERS: LlmProvider[] = [
       const { createOpenAI } = await import("@ai-sdk/openai");
       return createOpenAI({ apiKey }).chat(modelId);
     },
+    providerOptions: (modelId) => openaiCleanupProviderOptions(modelId),
+    prewarm: () => prewarmOpenAIConnection(),
   },
   {
     providerId: "groq",

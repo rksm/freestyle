@@ -88,17 +88,46 @@ describe("buildAsrVocabularyBias", () => {
       });
     });
 
-    it("caps nova-3 streaming keyterms at 25", () => {
+    it("keeps short nova-3 streaming keyterm lists unchanged", () => {
       const bias = buildAsrVocabularyBias(
         "deepgram",
         "nova-3-general",
-        terms(40),
+        ["first", "second", "third"],
+        true,
+      );
+      expect(bias).toEqual({
+        kind: "deepgram-keyterms",
+        terms: ["first", "second", "third"],
+      });
+    });
+
+    it("cuts long streaming keyterm lists by URL bytes while preserving order", () => {
+      const input = Array.from(
+        { length: 100 },
+        (_, index) => `${index}-${"x".repeat(100)}`,
+      );
+      const bias = buildAsrVocabularyBias(
+        "deepgram",
+        "nova-3-general",
+        input,
         true,
       );
       expect(bias?.kind).toBe("deepgram-keyterms");
-      if (bias?.kind === "deepgram-keyterms") {
-        expect(bias.terms).toHaveLength(25);
-      }
+      if (bias?.kind !== "deepgram-keyterms") return;
+
+      expect(bias.terms.length).toBeGreaterThan(25);
+      expect(bias.terms.length).toBeLessThan(100);
+      expect(bias.terms).toEqual(input.slice(0, bias.terms.length));
+
+      const usedBytes = bias.terms.reduce(
+        (sum, term) => sum + encodeURIComponent(`keyterm=${term}`).length + 1,
+        0,
+      );
+      const next = input[bias.terms.length]!;
+      expect(usedBytes).toBeLessThanOrEqual(4_000);
+      expect(
+        usedBytes + encodeURIComponent(`keyterm=${next}`).length + 1,
+      ).toBeGreaterThan(4_000);
     });
 
     it("caps nova-3 batch keyterms at 100", () => {

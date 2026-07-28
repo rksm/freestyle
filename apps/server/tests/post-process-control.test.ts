@@ -96,4 +96,26 @@ describe("postProcess — beforeCleanup control state", () => {
 
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("threads recognition context into local cleanup with a timeout", async () => {
+    const api = await createHookApi();
+
+    await postProcess("say freestyle", null, {
+      api,
+      recognitionContext: {
+        spellings: ["Freestyle"],
+        excerpt: "const product = Freestyle;",
+      },
+    });
+
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+    const params = cleanupSpy.mock.calls[0]?.[0];
+    expect(params.prompt).toContain(
+      "Exact spellings that may occur in the dictation: Freestyle",
+    );
+    expect(params.prompt).toContain(
+      "Excerpt from the destination:\nconst product = Freestyle;",
+    );
+    expect(params.signal).toBeInstanceOf(AbortSignal);
+  });
 });

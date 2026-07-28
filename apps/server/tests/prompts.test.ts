@@ -45,6 +45,48 @@ describe("buildRewritePrompt", () => {
     expect(prompt.prompt).toContain("<transcript>");
   });
 
+  it("appends screen context only to the user prompt", () => {
+    const prompt = buildRewritePrompt("use the freestyle API", {
+      context: {
+        spellings: ["Freestyle", "resolveRecognitionContext()"],
+        excerpt: "const context = resolveRecognitionContext();",
+      },
+    });
+
+    expect(prompt.system).not.toContain("<context>");
+    expect(prompt.system).not.toContain("resolveRecognitionContext()");
+    expect(prompt.prompt).toContain(
+      "Exact spellings that may occur in the dictation: Freestyle, resolveRecognitionContext()",
+    );
+    expect(prompt.prompt).toContain(
+      "Excerpt from the destination:\nconst context = resolveRecognitionContext();",
+    );
+    expect(prompt.prompt.indexOf("<context>")).toBeGreaterThan(
+      prompt.prompt.indexOf("</transcript>"),
+    );
+    expect(prompt.prompt).toContain(
+      "Never insert a context term the speaker did not say.",
+    );
+  });
+
+  it("omits the excerpt section when context has no excerpt", () => {
+    const prompt = buildRewritePrompt("say Freestyle", {
+      context: { spellings: ["Freestyle"] },
+    });
+
+    expect(prompt.prompt).toContain("<context>");
+    expect(prompt.prompt).not.toContain("Excerpt from the destination:");
+  });
+
+  it("omits context when it is absent or has no spellings", () => {
+    expect(buildRewritePrompt("hi").prompt).not.toContain("<context>");
+    expect(
+      buildRewritePrompt("hi", {
+        context: { spellings: [], excerpt: "unused" },
+      }).prompt,
+    ).not.toContain("<context>");
+  });
+
   it("uses the matching preset for each intensity", () => {
     expect(
       buildRewritePrompt("hi", { intensity: "medium" }).system.startsWith(

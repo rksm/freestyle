@@ -1,6 +1,7 @@
 import { sanitizeTranscriptText } from "@freestyle-voice/stt";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { Hono } from "hono";
+import { contextToAsr, contextToCleanup } from "../lib/context-settings.js";
 import { readSetting } from "../lib/db.js";
 import { getRewritePromptContext } from "../lib/editor/rewrite-context.js";
 import { formatError } from "../lib/format-error.js";
@@ -27,6 +28,7 @@ import {
   createHookApi,
   dispositionFromControl,
   emitAbortEvent,
+  resolveRecognitionContextSnapshot,
 } from "../lib/plugins/pipeline.js";
 import {
   applyFinalRewrites,
@@ -38,16 +40,13 @@ import {
 } from "../lib/post-process.js";
 import { capture, captureException } from "../lib/posthog.js";
 import { getDefaultModels } from "../lib/providers.js";
+import { buildRecognitionContext } from "../lib/recognition-context.js";
 import { invalidateSession } from "../lib/sessions.js";
 import { CloudAuthError } from "../lib/streaming/providers/freestyle-cloud.js";
 import { getProvider } from "../lib/streaming/registry.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { getApiKeyForProvider } from "../lib/streaming-stt.js";
-import { getCloudVocabularyBias } from "../lib/vocabulary.js";
-import {
-  buildAsrVocabularyBias,
-  resolveAsrVocabularyBias,
-} from "../lib/vocabulary-bias.js";
+import { buildAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
 import { WHISPER_PROVIDER_ID } from "../lib/whisper/constants.js";
 import { startInBackground } from "../lib/whisper/server.js";
@@ -104,11 +103,11 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     )} contentType=${contentType.slice(0, 40)}`,
   );
 
-  const appContext = resolveAppContextForCleanup(
-    decodeAppContext(c.req.header("x-app-context")),
-  );
+  const rawAppContext = decodeAppContext(c.req.header("x-app-context"));
+  const appContext = resolveAppContextForCleanup(rawAppContext);
   // Parse app name and resolve tone-routing destination once for analytics.
   const parsedCtx = parseAppContext(appContext);
+  const rawParsedCtx = parseAppContext(rawAppContext);
   const { destination: routedDestination } = getRewritePromptContext(
     appContext,
     getCleanupAppAssignments(),
@@ -181,6 +180,19 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   if (api.control.state !== "running") {
     return suppressedResponse();
   }
+
+  const snapshot = await resolveRecognitionContextSnapshot({
+    providerId: voiceProvider,
+    modelId: voiceModel,
+    streaming: false,
+    ...(rawParsedCtx ? { appContext: rawParsedCtx } : {}),
+  });
+  const recognitionContext = buildRecognitionContext({
+    snapshot,
+    pluginTerms: beforeTranscribeOutput.bias,
+    contextToAsr: contextToAsr(),
+    contextToCleanup: contextToCleanup(),
+  });
 
   const provider = getProvider(voiceProvider);
   if (!provider) {
@@ -265,12 +277,15 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     }
 
     try {
-      // A `beforeTranscribe` plugin can override the ASR vocabulary bias; honor
-      // it on the cloud path too (else fall back to the user's DB vocabulary),
-      // so the override behaves the same regardless of provider.
-      const vocabulary = beforeTranscribeOutput.bias
-        ? { terms: beforeTranscribeOutput.bias }
-        : getCloudVocabularyBias();
+      const vocabulary =
+        recognitionContext.terms.length > 0
+          ? {
+              terms: recognitionContext.terms,
+              ...(recognitionContext.noteText
+                ? { text: recognitionContext.noteText }
+                : {}),
+            }
+          : undefined;
       const result = await transcribeWithFreestyleCloud({
         token: apiKey,
         audio: audioData,
@@ -399,15 +414,13 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     }
   } else {
     try {
-      // A plugin-provided bias list is a set of raw terms — rebuild the
-      // provider-specific structure from them rather than the DB vocabulary.
-      const bias = beforeTranscribeOutput.bias
-        ? buildAsrVocabularyBias(
-            voiceProvider,
-            voiceModel,
-            beforeTranscribeOutput.bias,
-          )
-        : resolveAsrVocabularyBias(voiceProvider, voiceModel);
+      const bias = buildAsrVocabularyBias(
+        voiceProvider,
+        voiceModel,
+        recognitionContext.terms,
+        false,
+        recognitionContext.noteText,
+      );
       log.debug(`bias=${JSON.stringify(bias)}`);
       const t0 = Date.now();
       const result = await provider.transcribe({
@@ -527,6 +540,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     pp = await postProcess(rawText, appContext, {
       language,
       source: "batch",
+      recognitionContext: recognitionContext.cleanup,
       api,
     });
   } catch (err) {

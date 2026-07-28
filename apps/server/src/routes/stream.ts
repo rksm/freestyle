@@ -1,7 +1,13 @@
 import { sanitizeTranscriptText } from "@freestyle-voice/stt";
 import { createAppLogger } from "@freestyle-voice/utils";
+import type { ContextSnapshot } from "@freestyle-voice/validations";
 import { upgradeWebSocket } from "@hono/node-server";
 import { Hono } from "hono";
+import {
+  contextToAsr,
+  contextToCleanup,
+  isContextEnabled,
+} from "../lib/context-settings.js";
 import { getRewritePromptContext } from "../lib/editor/rewrite-context.js";
 import {
   FREESTYLE_CLOUD_PROVIDER_ID,
@@ -15,7 +21,10 @@ import {
   parseAppContext,
   plugins,
 } from "../lib/plugins/index.js";
-import { createHookApi } from "../lib/plugins/pipeline.js";
+import {
+  createHookApi,
+  resolveRecognitionContextSnapshot,
+} from "../lib/plugins/pipeline.js";
 import {
   applyFinalRewrites,
   getCleanupAppAssignments,
@@ -27,6 +36,10 @@ import {
 } from "../lib/post-process.js";
 import { capture, captureException } from "../lib/posthog.js";
 import { getDefaultModels } from "../lib/providers.js";
+import {
+  buildRecognitionContext,
+  type RecognitionContext,
+} from "../lib/recognition-context.js";
 import { invalidateSession } from "../lib/sessions.js";
 import { shouldKeepStreamingUpstreamAlive } from "../lib/streaming/session-policy.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
@@ -59,6 +72,17 @@ const stream = new Hono().get(
     let appContext: string | null = null;
     const effectiveAppContext = (): string | null =>
       resolveAppContextForCleanup(appContext);
+    const asrAppContext = (): string | null =>
+      isContextEnabled() ? appContext : null;
+    let recordingContext: RecognitionContext | null = null;
+    let recordingSnapshot: ContextSnapshot | undefined;
+    let recordingContextResolutionMs = 0;
+    let captureUpstreamRecording:
+      | ((
+          context: RecognitionContext | null,
+          contextResolutionMs: number,
+        ) => void)
+      | null = null;
     let audioDurationMs = 0;
     /** Audio received while the upstream socket is still connecting. */
     let pendingAudioChunks: ArrayBuffer[] = [];
@@ -67,6 +91,7 @@ const stream = new Hono().get(
     let reconnectAttempts = 0;
     let readyToken = 0;
     let notifiedReadyToken = 0;
+    let startGeneration = 0;
     const MAX_RECONNECT_ATTEMPTS = 3;
     const MAX_PENDING_AUDIO_CHUNKS = 500;
     type ResolvedStreamConfig = NonNullable<
@@ -80,7 +105,7 @@ const stream = new Hono().get(
     };
 
     /** Resolve the settings a session transport depends on, plus a compare key. */
-    function resolveStreamConfig(): {
+    function resolveStreamConfig(context?: RecognitionContext | null): {
       voice: { provider: string; model_id: string };
       language: string | undefined;
       bias: ReturnType<typeof resolveAsrVocabularyBias>;
@@ -93,6 +118,7 @@ const stream = new Hono().get(
         voice.provider,
         voice.model_id,
         true,
+        context ?? undefined,
       );
       // Freestyle Cloud post-processes server-side, so its cleanup preferences
       // are part of the session transport config: if they change mid-session we
@@ -136,6 +162,7 @@ const stream = new Hono().get(
       if (upstream === session) {
         upstream = null;
         upstreamConfigKey = null;
+        captureUpstreamRecording = null;
       }
       try {
         session.close();
@@ -184,11 +211,13 @@ const stream = new Hono().get(
         });
     }
 
-    function announceConfig(ws: {
-      send: (data: string) => void;
-      close: () => void;
-    }): AnnouncedStreamConfig | null {
-      const config = resolveStreamConfig();
+    function announceConfig(
+      ws: {
+        send: (data: string) => void;
+        close: () => void;
+      },
+      config = resolveStreamConfig(),
+    ): AnnouncedStreamConfig | null {
       if (!config) {
         ws.send(
           JSON.stringify({
@@ -233,11 +262,8 @@ const stream = new Hono().get(
         send: (data: string) => void;
         close: () => void;
       },
-      announced?: AnnouncedStreamConfig,
+      resolved: AnnouncedStreamConfig,
     ): Promise<void> {
-      const resolved = announced ?? announceConfig(ws);
-      if (!resolved) return;
-
       const { config, canStream, canUseSessionTransport, modelShort } =
         resolved;
       const voice = config.voice;
@@ -315,13 +341,19 @@ const stream = new Hono().get(
           : undefined;
 
       const token = ++readyToken;
+      let capturedContext = recordingContext;
+      let capturedContextResolutionMs = recordingContextResolutionMs;
+      captureUpstreamRecording = (context, contextResolutionMs) => {
+        capturedContext = context;
+        capturedContextResolutionMs = contextResolutionMs;
+      };
       const session = openStreamingSession({
         providerId: voice.provider,
         apiKey,
         model: voice.model_id,
         language: config.language,
         bias: config.bias,
-        appContext: effectiveAppContext(),
+        appContext: asrAppContext(),
         cleanup,
         callbacks: {
           onReady: (readyModel) => {
@@ -338,6 +370,8 @@ const stream = new Hono().get(
           },
           onFinal: async (rawText, upstreamRawText) => {
             if (upstream !== session) return;
+            const finalizationContext = capturedContext;
+            const contextResolutionMs = capturedContextResolutionMs;
             rawText = sanitizeTranscriptText(rawText);
             const upstreamRaw = upstreamRawText
               ? sanitizeTranscriptText(upstreamRawText)
@@ -440,7 +474,7 @@ const stream = new Hono().get(
                 commitTime > 0 ? Date.now() - commitTime : durationMs;
               if (LOG_PIPELINE_LATENCY) {
                 log.info(
-                  `[pipeline] cloud_stream stt_after_commit=${sttAfterCommitMs}ms session=${durationMs}ms | ${voice.provider}/${voiceDefaults!.model_id}`,
+                  `[pipeline] cloud_stream context=${contextResolutionMs}ms stt_after_commit=${sttAfterCommitMs}ms session=${durationMs}ms | ${voice.provider}/${voiceDefaults!.model_id}`,
                 );
               }
               if (!suppressed) {
@@ -535,7 +569,8 @@ const stream = new Hono().get(
                 : canStream
                   ? "streaming"
                   : "batch",
-              ...(useFastHandoff ? { includeTimings: true } : {}),
+              recognitionContext: finalizationContext?.cleanup,
+              includeTimings: true,
               api,
             });
 
@@ -554,11 +589,11 @@ const stream = new Hono().get(
                     const { handoffMs, llmMs } = handoffTimings;
                     const e2eMs = sttAfterCommitMs + handoffMs + llmMs;
                     log.info(
-                      `[pipeline] stt=${sttAfterCommitMs}ms handoff=${handoffMs}ms llm=${llmMs}ms e2e=${e2eMs}ms | ${voiceDefaults!.provider}/${voiceDefaults!.model_id} → ${pp.llmModel ?? "—"}`,
+                      `[pipeline] context=${contextResolutionMs}ms stt=${sttAfterCommitMs}ms handoff=${handoffMs}ms llm=${llmMs}ms e2e=${e2eMs}ms | ${voiceDefaults!.provider}/${voiceDefaults!.model_id} → ${pp.llmModel ?? "—"}`,
                     );
                   } else {
                     log.info(
-                      `[pipeline] session=${totalDurationMs}ms stt_after_commit=${sttAfterCommitMs}ms | ${voiceDefaults!.provider}/${voiceDefaults!.model_id}`,
+                      `[pipeline] context=${contextResolutionMs}ms session=${totalDurationMs}ms stt_after_commit=${sttAfterCommitMs}ms | ${voiceDefaults!.provider}/${voiceDefaults!.model_id}`,
                     );
                   }
                 }
@@ -672,6 +707,7 @@ const stream = new Hono().get(
               }),
             );
             upstream = null;
+            captureUpstreamRecording = null;
             try {
               session.close();
             } catch {}
@@ -687,7 +723,7 @@ const stream = new Hono().get(
             ) {
               reconnectAttempts++;
               try {
-                connectUpstream(ws);
+                connectUpstream(ws, resolved);
               } catch {}
             }
           },
@@ -697,6 +733,106 @@ const stream = new Hono().get(
       if (canUseSessionTransport) {
         afterSessionReady(ws, session, modelShort, token);
       }
+    }
+
+    async function handleStart(
+      msg: { context?: string | null },
+      ws: {
+        send: (data: string) => void;
+        close: () => void;
+      },
+    ): Promise<void> {
+      const generation = ++startGeneration;
+      sessionStartTime = Date.now();
+      audioDurationMs = 0;
+      commitTime = 0;
+      appContext = msg.context ?? null;
+      pendingAudioChunks = [];
+      pendingChunksDropped = false;
+      pendingCommit = false;
+      reconnectAttempts = 0;
+      sessionTransportUnavailable = false;
+      recordingContext = null;
+      recordingSnapshot = undefined;
+      recordingContextResolutionMs = 0;
+
+      // Detach a warm session while context resolves. Binary frames then take
+      // the existing pending-audio path because `upstream` is null. If the
+      // contextual config still matches, the same session is reattached below.
+      const previousUpstream = upstream;
+      const previousConfigKey = upstreamConfigKey;
+      const previousCapture = captureUpstreamRecording;
+      upstream = null;
+      captureUpstreamRecording = null;
+
+      const contextStartedAt = Date.now();
+      const voice = getDefaultModels().voice;
+      if (voice) {
+        const parsedAppContext = parseAppContext(appContext);
+        recordingSnapshot = await resolveRecognitionContextSnapshot({
+          providerId: voice.provider,
+          modelId: voice.model_id,
+          streaming: true,
+          ...(parsedAppContext ? { appContext: parsedAppContext } : {}),
+        });
+      }
+      recordingContext = buildRecognitionContext({
+        snapshot: recordingSnapshot,
+        contextToAsr: contextToAsr(),
+        contextToCleanup: contextToCleanup(),
+      });
+      recordingContextResolutionMs = Date.now() - contextStartedAt;
+
+      // A later start supersedes this one while its collector was pending.
+      if (closed || generation !== startGeneration) {
+        try {
+          previousUpstream?.close();
+        } catch {}
+        return;
+      }
+
+      const nextConfig = resolveStreamConfig(recordingContext);
+      const sameConfig =
+        previousConfigKey !== null && nextConfig?.key === previousConfigKey;
+      const keepWarm =
+        nextConfig !== null &&
+        shouldKeepStreamingUpstreamAlive(nextConfig.voice.provider);
+      if (previousUpstream?.reset && sameConfig && keepWarm) {
+        upstream = previousUpstream;
+        upstreamConfigKey = previousConfigKey;
+        captureUpstreamRecording = previousCapture;
+        captureUpstreamRecording?.(
+          recordingContext,
+          recordingContextResolutionMs,
+        );
+        previousUpstream.reset();
+        const token = ++readyToken;
+        if (upstream.waitUntilReady) {
+          afterSessionReady(
+            ws,
+            upstream,
+            stripProviderPrefix(nextConfig.voice.model_id),
+            token,
+          );
+        } else {
+          notifySessionReady(
+            ws,
+            stripProviderPrefix(nextConfig.voice.model_id),
+            token,
+          );
+        }
+        return;
+      }
+
+      if (previousUpstream) {
+        upstream = previousUpstream;
+        captureUpstreamRecording = previousCapture;
+        closeUpstreamSession(previousUpstream);
+      }
+
+      const announced = announceConfig(ws, nextConfig);
+      if (!announced) return;
+      await connectUpstream(ws, announced);
     }
 
     return {
@@ -720,7 +856,7 @@ const stream = new Hono().get(
           ) {
             return;
           }
-          connectUpstream(ws, announced);
+          void connectUpstream(ws, announced);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           ws.send(JSON.stringify({ type: "error", message }));
@@ -780,59 +916,14 @@ const stream = new Hono().get(
         switch (msg.type) {
           case "context":
             appContext = msg.context ?? null;
-            upstream?.setContext?.(effectiveAppContext());
+            upstream?.setContext?.(asrAppContext());
             break;
-          case "start": {
-            sessionStartTime = Date.now();
-            audioDurationMs = 0;
-            commitTime = 0;
-            appContext = msg.context ?? null;
-            pendingAudioChunks = [];
-            pendingChunksDropped = false;
-            pendingCommit = false;
-            reconnectAttempts = 0;
-            // A prior upstream error disables session transport only for the
-            // rest of that recording; each new recording gets a fresh attempt.
-            sessionTransportUnavailable = false;
-            // Reuse the session only if the settings it was built with
-            // (provider, model, language, vocabulary bias) are unchanged.
-            const nextConfig = resolveStreamConfig();
-            const sameConfig =
-              upstreamConfigKey !== null &&
-              nextConfig?.key === upstreamConfigKey;
-            const keepWarm =
-              nextConfig !== null &&
-              shouldKeepStreamingUpstreamAlive(nextConfig.voice.provider);
-            if (upstream?.reset && sameConfig && keepWarm) {
-              upstream.reset();
-              const voice = voiceDefaults ?? getDefaultModels().voice;
-              if (voice) {
-                const token = ++readyToken;
-                if (upstream.waitUntilReady) {
-                  afterSessionReady(
-                    ws,
-                    upstream,
-                    stripProviderPrefix(voice.model_id),
-                    token,
-                  );
-                } else {
-                  notifySessionReady(
-                    ws,
-                    stripProviderPrefix(voice.model_id),
-                    token,
-                  );
-                }
-              }
-              break;
-            }
-            if (upstream) {
-              closeUpstreamSession(upstream);
-            }
-            try {
-              connectUpstream(ws);
-            } catch {}
+          case "start":
+            void handleStart(msg, ws).catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              ws.send(JSON.stringify({ type: "error", message }));
+            });
             break;
-          }
           case "commit":
             commitTime = Date.now();
             if (msg.audioDurationMs && msg.audioDurationMs > 0) {
@@ -841,7 +932,7 @@ const stream = new Hono().get(
             }
             if (msg.context !== undefined) {
               appContext = msg.context;
-              upstream?.setContext?.(effectiveAppContext());
+              upstream?.setContext?.(asrAppContext());
             }
             if (
               upstream &&
@@ -853,6 +944,7 @@ const stream = new Hono().get(
             }
             break;
           case "cancel":
+            startGeneration++;
             pendingCommit = false;
             pendingAudioChunks = [];
             if (
@@ -870,6 +962,7 @@ const stream = new Hono().get(
 
       onClose() {
         closed = true;
+        startGeneration++;
         pendingAudioChunks = [];
         pendingCommit = false;
         try {
@@ -880,6 +973,7 @@ const stream = new Hono().get(
 
       onError() {
         closed = true;
+        startGeneration++;
         pendingAudioChunks = [];
         pendingCommit = false;
         try {

@@ -14,7 +14,11 @@ import { getDb, writeSetting } from "../src/lib/db.js";
 const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 
 const cloudTranscribeSpy = vi.fn(
-  async (opts: { mode?: string; systemFragments?: string[] }) => ({
+  async (opts: {
+    mode?: string;
+    systemFragments?: string[];
+    vocabulary?: { terms: string[]; text?: string };
+  }) => ({
     raw: "raw cloud text",
     cleaned: opts.mode === "combined" ? "cleaned cloud text" : "raw cloud text",
     usage: { inputTokens: 1, outputTokens: 1 },
@@ -88,7 +92,11 @@ function transcribe(): Promise<Response> {
   });
 }
 
-function lastCallOpts(): { mode?: string; systemFragments?: string[] } {
+function lastCallOpts(): {
+  mode?: string;
+  systemFragments?: string[];
+  vocabulary?: { terms: string[]; text?: string };
+} {
   const calls = cloudTranscribeSpy.mock.calls;
   return calls[calls.length - 1][0];
 }
@@ -101,6 +109,7 @@ describe("POST /api/transcribe — combined cloud + beforeCleanup", () => {
     writeSetting("llm_cleanup", "true");
     const db = getDb();
     db.exec("DELETE FROM transcription_history");
+    db.exec("DELETE FROM vocabulary");
     db.prepare("DELETE FROM settings WHERE key = ?").run(
       SETTINGS_KEYS.historyPaused,
     );
@@ -123,6 +132,28 @@ describe("POST /api/transcribe — combined cloud + beforeCleanup", () => {
     expect(opts.systemFragments).toEqual(["Add emoji."]);
     // Combined mode does its cleanup remotely — never touches local postProcess.
     expect(postProcessSpy).not.toHaveBeenCalled();
+  });
+
+  it("merges beforeTranscribe bias after persistent vocabulary", async () => {
+    getDb()
+      .prepare("INSERT INTO vocabulary (term, notes) VALUES (?, ?)")
+      .run("PersistentTerm", "saved vocabulary");
+    registry.current = new PluginRegistry([
+      {
+        name: "bias",
+        beforeTranscribe: (_input, output) => {
+          output.bias = ["PluginTerm"];
+        },
+      },
+    ]);
+
+    const res = await transcribe();
+
+    expect(res.status).toBe(200);
+    expect(lastCallOpts().vocabulary).toEqual({
+      terms: ["PersistentTerm", "PluginTerm"],
+      text: "PersistentTerm: saved vocabulary",
+    });
   });
 
   it("drops to raw mode (no cloud cleanup) when beforeCleanup sets skip", async () => {

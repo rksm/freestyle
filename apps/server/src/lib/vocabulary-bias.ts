@@ -1,3 +1,4 @@
+import type { RecognitionContext } from "./recognition-context.js";
 import { stripProviderPrefix } from "./streaming/types.js";
 import {
   buildVocabularyNoteText,
@@ -14,8 +15,7 @@ export type AsrVocabularyBias =
 
 const PROMPT_CHAR_BUDGET = 900;
 const DEEPGRAM_KEYTERM_MAX = 100;
-/** Keep streaming URLs short — long keyterm lists break the WS handshake. */
-const DEEPGRAM_STREAMING_KEYTERM_MAX = 25;
+const DEEPGRAM_STREAMING_KEYTERM_URL_BUDGET_BYTES = 4_000;
 const SONIOX_TERM_MAX = 500;
 const SONIOX_TERMS_CHAR_BUDGET = 6000;
 const ELEVENLABS_BATCH_KEYTERM_MAX = 100;
@@ -68,6 +68,21 @@ function expandNova2Keywords(terms: string[]): string[] {
       out.push(w);
       if (out.length >= DEEPGRAM_KEYTERM_MAX) return out;
     }
+  }
+  return out;
+}
+
+function capDeepgramStreamingTerms(terms: string[]): string[] {
+  const capped = capTerms(terms, DEEPGRAM_KEYTERM_MAX);
+  const out: string[] = [];
+  let usedBytes = 0;
+  for (const term of capped) {
+    const termBytes = encodeURIComponent(`keyterm=${term}`).length + 1;
+    if (usedBytes + termBytes > DEEPGRAM_STREAMING_KEYTERM_URL_BUDGET_BYTES) {
+      break;
+    }
+    out.push(term);
+    usedBytes += termBytes;
   }
   return out;
 }
@@ -133,19 +148,18 @@ export function buildAsrVocabularyBias(
     }
     case "deepgram": {
       if (isNova3Model(short)) {
-        const max = streaming
-          ? DEEPGRAM_STREAMING_KEYTERM_MAX
-          : DEEPGRAM_KEYTERM_MAX;
-        const keyterms = capTerms(capped, max);
+        const keyterms = streaming
+          ? capDeepgramStreamingTerms(capped)
+          : capTerms(capped, DEEPGRAM_KEYTERM_MAX);
         return keyterms.length > 0
           ? { kind: "deepgram-keyterms", terms: keyterms }
           : null;
       }
       if (isNova2Model(short)) {
-        const max = streaming
-          ? DEEPGRAM_STREAMING_KEYTERM_MAX
-          : DEEPGRAM_KEYTERM_MAX;
-        const keywords = expandNova2Keywords(capTerms(capped, max));
+        const expanded = expandNova2Keywords(capped);
+        const keywords = streaming
+          ? capDeepgramStreamingTerms(expanded)
+          : expanded;
         return keywords.length > 0
           ? { kind: "deepgram-keywords", terms: keywords }
           : null;
@@ -191,7 +205,18 @@ export function resolveAsrVocabularyBias(
   providerId: string,
   modelId: string,
   streaming = false,
+  context?: RecognitionContext,
 ): AsrVocabularyBias | null {
+  if (context) {
+    return buildAsrVocabularyBias(
+      providerId,
+      modelId,
+      context.terms,
+      streaming,
+      context.noteText,
+    );
+  }
+
   const entries = loadVocabularyEntries();
   return buildAsrVocabularyBias(
     providerId,

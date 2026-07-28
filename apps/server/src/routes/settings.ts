@@ -1,4 +1,5 @@
 import {
+  booleanSettingSchema,
   caCertPathSettingSchema,
   cleanupAppAssignmentsSchema,
   cleanupCustomPromptSchema,
@@ -18,6 +19,14 @@ import {
 } from "@freestyle-voice/validations";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import {
+  CONTEXT_ENABLED_SETTING,
+  CONTEXT_SOURCE_EDITOR_SETTING,
+  CONTEXT_SOURCE_TERMINAL_SETTING,
+  CONTEXT_SOURCE_WINDOW_SETTING,
+  CONTEXT_TO_ASR_SETTING,
+  CONTEXT_TO_CLEANUP_SETTING,
+} from "../lib/context-settings.js";
 import { getDb } from "../lib/db.js";
 import {
   HISTORY_RETENTION_SETTING_KEY,
@@ -64,7 +73,19 @@ const settings = new Hono()
     const body = c.req.valid("json");
 
     // Key-specific validation for settings with constrained value shapes.
-    if (key === "cleanup_intensity") {
+    if (
+      key === CONTEXT_ENABLED_SETTING ||
+      key === CONTEXT_TO_ASR_SETTING ||
+      key === CONTEXT_TO_CLEANUP_SETTING ||
+      key === CONTEXT_SOURCE_WINDOW_SETTING ||
+      key === CONTEXT_SOURCE_TERMINAL_SETTING ||
+      key === CONTEXT_SOURCE_EDITOR_SETTING
+    ) {
+      const parsed = booleanSettingSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json({ error: "Invalid context setting" }, 400);
+      }
+    } else if (key === "cleanup_intensity") {
       const parsed = cleanupIntensitySchema.safeParse(body.value);
       if (!parsed.success) {
         return c.json({ error: "Invalid cleanup intensity" }, 400);

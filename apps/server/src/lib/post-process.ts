@@ -43,9 +43,11 @@ import {
 import { createHookApi } from "./plugins/pipeline.js";
 import { capture, captureException } from "./posthog.js";
 import { createChatModel, getDefaultModels } from "./providers.js";
+import type { RecognitionContext } from "./recognition-context.js";
 import { getSessionToken } from "./sessions.js";
 
 const log = createAppLogger("post-process");
+const CLEANUP_TIMEOUT_MS = 10_000;
 
 export interface PostProcessTimings {
   handoffMs: number;
@@ -73,6 +75,7 @@ export type PostProcessSource =
 export interface PostProcessOptions {
   source?: PostProcessSource;
   language?: string;
+  recognitionContext?: RecognitionContext["cleanup"];
   /** Return handoff/llm timing breakdown for pipeline logs. */
   includeTimings?: boolean;
   /**
@@ -280,6 +283,8 @@ export async function postProcess(
     } = getEffectiveCleanupTones();
 
     if (llm.provider === FREESTYLE_CLOUD_PROVIDER_ID) {
+      // Cloud assembles its own prompts server-side. Forwarding recognition
+      // context is out of scope for this local seam.
       // Freestyle Cloud assembles its cleanup prompts server-side: it resolves
       // the destination from appContext + appAssignments and applies the tone
       // preferences we forward here, mirroring the local/direct-model path.
@@ -392,6 +397,7 @@ export async function postProcess(
           workTone,
           emailTone,
           overallTone,
+          context: options.recognitionContext,
         });
         const pluginSystem =
           promptHook.system.length > 0
@@ -419,6 +425,9 @@ export async function postProcess(
           providerOptions: getLlmProvider(llm.provider)?.providerOptions?.(
             llm.model_id,
           ),
+          // The STT helper reports aborts through onError and falls back to the
+          // sanitized raw transcript instead of throwing.
+          signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
           onError: (err) => {
             cleanupError = err;
           },
