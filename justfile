@@ -19,9 +19,11 @@ build:
 
 # Build a Linux release of the desktop app (AppImage + deb in apps/electron/dist).
 # Builds workspace dependencies first, then native helpers, renderer, and installers.
+# USE_SYSTEM_FPM: electron-builder's downloaded fpm cannot run on NixOS; the
+# dev shell provides fpm from nixpkgs instead.
 release:
     pnpm exec turbo build --filter='@freestyle-voice/electron^...'
-    pnpm --filter @freestyle-voice/electron run build:linux
+    USE_SYSTEM_FPM=true pnpm --filter @freestyle-voice/electron run build:linux
 
 # Run all test suites.
 test:
