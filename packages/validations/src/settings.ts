@@ -6,6 +6,9 @@ export const settingValueSchema = z.object({
 
 export type SettingValueInput = z.infer<typeof settingValueSchema>;
 
+/** Boolean settings are stored as strings in the settings key/value table. */
+export const booleanSettingSchema = z.enum(["true", "false"]);
+
 /** Post-processing (AI cleanup) intensity levels. */
 export const cleanupIntensitySchema = z.enum([
   "low",

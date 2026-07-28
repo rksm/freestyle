@@ -1,4 +1,5 @@
 import type { PluginConfig } from "./config.js";
+import type { ContextSnapshot } from "./context-snapshot.js";
 import type { AppContext, FreestyleEvent } from "./events.js";
 import type { HookApi } from "./hook-api.js";
 import type { OutputMode } from "./output.js";
@@ -49,11 +50,25 @@ export interface Hooks {
   ) => PluginConfig | undefined | Promise<PluginConfig | undefined>;
 
   /**
+   * [server] Fires before speech-to-text in both batch and streaming routes,
+   * before the provider session opens. Fill `output.snapshot` with a bounded
+   * snapshot of the user's desktop context. The host applies a bounded await
+   * (~250 ms). A slow handler is abandoned for that dictation and the pipeline
+   * proceeds without context. Handlers must therefore be fast and must never
+   * block on user interaction.
+   */
+  resolveRecognitionContext?: Handler<
+    ResolveRecognitionContextInput,
+    { snapshot?: ContextSnapshot }
+  >;
+
+  /**
    * [server] Fires at the top of the transcribe request, before speech-to-text
    * runs. Edit `output.audio` to preprocess the recorded audio, or override
-   * `output.providerId`/`output.modelId`/`output.language`/`output.bias` to
-   * change how this dictation is transcribed. Call `api.control.consume()` to
-   * skip STT entirely (e.g. a plugin that handles the audio itself).
+   * `output.providerId`/`output.modelId`/`output.language` to change how this
+   * dictation is transcribed. Set `output.bias` to augment its vocabulary.
+   * Call `api.control.consume()` to skip STT entirely (e.g. a plugin that
+   * handles the audio itself).
    */
   beforeTranscribe?: Handler<BeforeTranscribeInput, BeforeTranscribeOutput>;
 
@@ -104,6 +119,17 @@ export interface Hooks {
 /** The destination bucket used to steer contextual cleanup. */
 export type CleanupToneDestination = "overall" | "personal" | "work" | "email";
 
+export interface ResolveRecognitionContextInput {
+  /** The voice provider id that will receive the recognition request. */
+  readonly providerId: string;
+  /** The voice model id that will receive the recognition request. */
+  readonly modelId: string;
+  /** Whether the provider session uses the streaming route. */
+  readonly streaming: boolean;
+  /** Application the user was dictating into, if known. */
+  readonly appContext?: AppContext;
+}
+
 export interface BeforeTranscribeInput {
   /** The resolved default voice provider id, before any plugin override. */
   readonly providerId: string;
@@ -124,7 +150,7 @@ export interface BeforeTranscribeOutput {
   modelId: string;
   /** Override the language hint passed to the provider. */
   language?: string;
-  /** Override or augment the ASR vocabulary bias for this dictation. */
+  /** Terms to augment the user's vocabulary and desktop recognition context. */
   bias?: string[];
 }
 

@@ -9,6 +9,7 @@ export {
   type PluginStorage,
   type SettingsReader,
 } from "./context.js";
+export type { ContextSnapshot } from "./context-snapshot.js";
 export type { AppContext, FreestyleEvent } from "./events.js";
 export { FreestyleEventType, PipelineStage } from "./events.js";
 export {
@@ -28,6 +29,7 @@ export type {
   Handler,
   HookName,
   Hooks,
+  ResolveRecognitionContextInput,
 } from "./hooks.js";
 export type {
   PluginLlm,

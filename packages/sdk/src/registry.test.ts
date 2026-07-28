@@ -48,6 +48,31 @@ describe("PluginRegistry.run", () => {
     expect(api.control.state).toBe("running");
   });
 
+  it("runs resolveRecognitionContext and accepts a plugin snapshot", async () => {
+    const registry = new PluginRegistry([
+      plugin("context", {
+        resolveRecognitionContext: (_input, output) => {
+          output.snapshot = {
+            capturedAt: 1,
+            app: { name: "Editor" },
+          };
+        },
+      }),
+    ]);
+
+    const result = await registry.run(
+      "resolveRecognitionContext",
+      { providerId: "p", modelId: "m", streaming: true },
+      {},
+      createHookApi(),
+    );
+
+    expect(result.snapshot).toEqual({
+      capturedAt: 1,
+      app: { name: "Editor" },
+    });
+  });
+
   it("stopPropagation stops later plugins for that hook only", async () => {
     const order: string[] = [];
     const registry = new PluginRegistry([
