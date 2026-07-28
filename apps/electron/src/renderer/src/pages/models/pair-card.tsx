@@ -17,7 +17,6 @@ export function PairCard({
   voice,
   llm,
   llmCleanup,
-  cleanupLocked,
   onToggleCleanup,
   onChangeVoice,
   onChangeLlm,
@@ -26,8 +25,6 @@ export function PairCard({
   voice: ConfiguredModel | undefined;
   llm: ConfiguredModel | undefined;
   llmCleanup: boolean;
-  /** When true, cleanup stays on and the toggle is disabled (Freestyle Transcribe). */
-  cleanupLocked?: boolean;
   onToggleCleanup: (next: boolean) => void;
   onChangeVoice: () => void;
   onChangeLlm: () => void;
@@ -35,7 +32,6 @@ export function PairCard({
   onConfigureWarming?: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
-  const cleanupOn = cleanupLocked || llmCleanup;
 
   return (
     <section className="border-border bg-card grid grid-cols-1 gap-6 rounded-[14px] border p-6 min-[820px]:grid-cols-2">
@@ -58,28 +54,17 @@ export function PairCard({
       />
       <div className="border-border border-t pt-6 min-[820px]:border-l min-[820px]:border-t-0 min-[820px]:pl-6 min-[820px]:pt-0">
         <PairSide
-          kicker={
-            cleanupLocked
-              ? t("models.pair.cleanupKickerLocked")
-              : t("models.pair.cleanupKicker")
-          }
-          modelName={cleanupOn ? llm?.model_name : undefined}
+          kicker={t("models.pair.cleanupKicker")}
+          modelName={llmCleanup ? llm?.model_name : undefined}
           providerName={
-            cleanupLocked
-              ? t("models.pair.includedWithFreestyle")
-              : cleanupOn && llm
-                ? displayName(llm.provider)
-                : undefined
+            llmCleanup && llm ? displayName(llm.provider) : undefined
           }
           cta={llm ? t("models.pair.change") : t("models.pair.pickModel")}
           noneLabel={t("models.pair.noneSelected")}
-          toggle={cleanupOn}
-          toggleDisabled={cleanupLocked}
+          toggle={llmCleanup}
           onToggle={onToggleCleanup}
           onChange={onChangeLlm}
-          changeDisabled={cleanupLocked}
-          dimmed={!cleanupOn}
-          providerIsIncluded={cleanupLocked}
+          dimmed={!llmCleanup}
         />
       </div>
     </section>
@@ -94,12 +79,9 @@ function PairSide({
   ctaAriaLabel,
   noneLabel,
   toggle,
-  toggleDisabled,
   onToggle,
   onChange,
-  changeDisabled,
   dimmed,
-  providerIsIncluded,
   warmingAction,
 }: {
   kicker: string;
@@ -109,12 +91,9 @@ function PairSide({
   ctaAriaLabel?: string;
   noneLabel: string;
   toggle?: boolean;
-  toggleDisabled?: boolean;
   onToggle?: (next: boolean) => void;
   onChange: () => void;
-  changeDisabled?: boolean;
   dimmed?: boolean;
-  providerIsIncluded?: boolean;
   warmingAction?: { label: string; onClick: () => void };
 }): React.JSX.Element {
   const { t } = useTranslation();
@@ -128,11 +107,7 @@ function PairSide({
       <div className="flex items-center justify-between gap-3">
         <Eyebrow text={kicker} mono={false} />
         {onToggle !== undefined && (
-          <Toggle
-            on={!!toggle}
-            onChange={(v) => onToggle(v)}
-            disabled={toggleDisabled}
-          />
+          <Toggle on={!!toggle} onChange={(v) => onToggle(v)} />
         )}
       </div>
       <div>
@@ -157,24 +132,11 @@ function PairSide({
           </div>
         )}
         {providerName && (
-          <div
-            className={cn(
-              "mt-1.5 text-[13px]",
-              providerIsIncluded
-                ? "text-muted-foreground"
-                : "text-muted-foreground",
-            )}
-          >
-            {providerIsIncluded ? (
-              providerName
-            ) : (
-              <>
-                {t("models.pair.via")}{" "}
-                <span className="text-foreground/80 font-medium">
-                  {providerName}
-                </span>
-              </>
-            )}
+          <div className="text-muted-foreground mt-1.5 text-[13px]">
+            {t("models.pair.via")}{" "}
+            <span className="text-foreground/80 font-medium">
+              {providerName}
+            </span>
           </div>
         )}
       </div>
@@ -183,7 +145,6 @@ function PairSide({
           variant="outline"
           size="sm"
           onClick={onChange}
-          disabled={changeDisabled}
           aria-label={ctaAriaLabel}
         >
           {cta}
