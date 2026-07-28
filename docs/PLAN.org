@@ -42,32 +42,51 @@ server degrades gracefully to no context, which is acceptable and documented.
 * Implementation status [2026-07-28]
 
 Phases 1, 2 (as re-scoped: core seam + plugin collectors), and the eval
-harness are implemented and verified: server suite 371 tests green, SDK 27,
-stt 28, desktop-context plugin 10, electron node+web typechecks pass, biome
-clean. Implementation was done via scoped codex runs, each reviewed and
-independently verified.
+harness are implemented, verified, and committed on =improvements=: server
+suite 371 tests green, SDK 27, stt 28, desktop-context plugin 10, electron
+node+web typechecks pass, biome clean. Implementation was done via scoped
+codex runs, each reviewed and independently verified.
 
-What remains is the manual, user-facing part of Phase 0 plus live
-evaluation:
+Landed since the initial status:
 
-1. Enter the Deepgram and OpenAI API keys in Settings (the repo =.env= is
+- Sign-in removed. The app runs as a local anonymous user: no onboarding
+  cloud step, no account, billing, or upgrade UI, freestyle-cloud absent
+  from all pickers, native cloud prompts inert. Server cloud code stays
+  dormant.
+- =justfile= with dev, test, and =just release= (Linux AppImage + deb,
+  verified working). The nix dev shell provides node, corepack, just, gcc,
+  the X11 header chain, fpm, cmake, and gnumake. The release recipe sets
+  =USE_SYSTEM_FPM= for NixOS.
+- whisper.cpp 1.8.5 built into =~/.cache/freestyle/whisper-bin/= (the
+  onboarding model download previously failed on the missing cmake
+  toolchain).
+- The FocusBridge GNOME extension and the desktop-context plugin are
+  installed declaratively via =/etc/nixos= (extension as a vendored package
+  enabled in dconf, plugin as a self-contained loose-file bundle placed
+  into =~/.config/Freestyle/plugins/= by home-manager). Sync recipes in the
+  justfile: =just sync-gnome-extension= and =just sync-desktop-context-plugin=.
+  Verified with =just switch build= in =/etc/nixos=.
+
+What remains:
+
+1. Run =just switch= in =/etc/nixos= and log out/in so GNOME loads the
+   extension. Verify with a =gdbus call ... com.freestyle.FocusBridge
+   .GetActiveWindow= round trip.
+2. Enter the Deepgram and OpenAI API keys in Settings (the repo =.env= is
    not read by the app). Select voice = deepgram/nova-3 and cleanup =
    openai/gpt-5.6-luna, and confirm the model passes the models.dev support
    check (otherwise cleanup silently no-ops).
-2. Install the GNOME extension: symlink =integrations/gnome-focus-bridge/=
-   to =~/.local/share/gnome-shell/extensions/freestyle-focus-bridge@freestyle-voice.dev=,
-   log out/in, =gnome-extensions enable freestyle-focus-bridge@freestyle-voice.dev=.
 3. Load =integrations/emacs/freestyle-context.el= in Emacs (requires
-   =server-start=).
-4. Link the desktop-context plugin (=corepack pnpm --filter
-   @freestyle-voice/plugin-desktop-context link=) and enable it.
-5. Record the corpus (=scripts/eval-context/record.sh=) and run the matrix
-   (=scripts/eval-context/README.md=).
+   =server-start=). Optionally wire it into =/etc/nixos= =emacs.nix= the
+   same way as the plugin.
+4. Record the corpus (=scripts/eval-context/record.sh=) and run the matrix
+   (=scripts/eval-context/README.md=), including the plain-dictation smoke
+   test of the full pipeline with context enabled.
 
 Known limitations recorded during implementation: streaming =final= exposes
 no separable raw transcript, so stream-mode raw-recall metrics are
-unavailable; the eval =baseline= and =vocab= configs share whatever static
-vocabulary exists (no per-request vocabulary disable); live GNOME/wezterm/
+unavailable. The eval =baseline= and =vocab= configs share whatever static
+vocabulary exists (no per-request vocabulary disable). Live GNOME/wezterm/
 Emacs collector behavior still needs a real desktop session to confirm.
 
 * The one design idea
