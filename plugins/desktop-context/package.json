@@ -1,0 +1,44 @@
+{
+  "name": "@freestyle-voice/plugin-desktop-context",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Collect focused Linux desktop context for Freestyle recognition.",
+  "license": "MIT",
+  "homepage": "https://github.com/freestyle-voice/freestyle/tree/main/plugins/desktop-context#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freestyle-voice/freestyle.git",
+    "directory": "plugins/desktop-context"
+  },
+  "keywords": [
+    "freestyle",
+    "freestyle-plugin",
+    "voice",
+    "dictation",
+    "context",
+    "linux"
+  ],
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pkgroll --minify",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "link": "node ../../scripts/link-plugin.mjs",
+    "unlink": "node ../../scripts/link-plugin.mjs --unlink"
+  },
+  "dependencies": {
+    "freestyle-voice": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "pkgroll": "^2.27.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.7"
+  }
+}
