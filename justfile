@@ -57,3 +57,12 @@ sync-gnome-extension:
        integrations/gnome-focus-bridge/metadata.json \
        integrations/gnome-focus-bridge/README.md \
        /etc/nixos/packages/freestyle-focus-bridge/
+
+# Build the desktop-context plugin and sync its self-contained bundle into
+# the NixOS config repo (placed into ~/.config/Freestyle/plugins/ by
+# /etc/nixos/shared/linux-home/freestyle.nix; apply with `just switch` there,
+# then restart Freestyle).
+sync-desktop-context-plugin:
+    pnpm --filter @freestyle-voice/plugin-desktop-context build
+    cp plugins/desktop-context/dist/index.js \
+       /etc/nixos/packages/freestyle-desktop-context/desktop-context.mjs
