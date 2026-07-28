@@ -39,9 +39,9 @@ import {
 import { Textarea } from "@renderer/components/ui/textarea";
 import { usePersistentState } from "@renderer/hooks/use-persistent-state";
 import { getClient } from "@renderer/lib/api";
-import { settingsQueryOptions } from "@renderer/lib/query";
+import { SETTINGS_QUERY_KEY, settingsQueryOptions } from "@renderer/lib/query";
 import { cn } from "@renderer/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -245,6 +245,7 @@ export default function TonePage(): React.JSX.Element {
 
   const customPromptDirty = cleanupCustomPrompt !== savedCleanupCustomPrompt;
 
+  const queryClient = useQueryClient();
   const settingsQuery = useQuery(settingsQueryOptions());
 
   const configuredQuery = useQuery({
@@ -304,17 +305,27 @@ export default function TonePage(): React.JSX.Element {
     );
   }, [settingsQuery.data]);
 
-  const saveSetting = useCallback(async (key: string, value: string) => {
-    // The Hono client does not throw on non-2xx — surface server rejections so
-    // callers' .catch handlers fire (and "Saved" state isn't shown on failure).
-    const res = await getClient().api.settings[":key"].$put({
-      param: { key },
-      json: { value },
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to save setting "${key}" (${res.status})`);
-    }
-  }, []);
+  const saveSetting = useCallback(
+    async (key: string, value: string) => {
+      // The Hono client does not throw on non-2xx — surface server rejections so
+      // callers' .catch handlers fire (and "Saved" state isn't shown on failure).
+      const res = await getClient().api.settings[":key"].$put({
+        param: { key },
+        json: { value },
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to save setting "${key}" (${res.status})`);
+      }
+      // Mirror the save into the shared settings cache (staleTime is one hour),
+      // or a remount re-seeds this page from pre-save values and the UI appears
+      // to revert. Same pattern as the settings page.
+      queryClient.setQueryData<Record<string, string>>(
+        SETTINGS_QUERY_KEY,
+        (old) => (old ? { ...old, [key]: value } : old),
+      );
+    },
+    [queryClient],
+  );
 
   const selectCleanupMode = useCallback(
     (next: CleanupCardValue) => {
