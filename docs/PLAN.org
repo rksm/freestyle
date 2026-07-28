@@ -39,6 +39,37 @@ fork-first draft (multipart switch, Streamer hold-start join, IPC capture
 service, snapshot fields on three client requests) disappears. A remote
 server degrades gracefully to no context, which is acceptable and documented.
 
+* Implementation status [2026-07-28]
+
+Phases 1, 2 (as re-scoped: core seam + plugin collectors), and the eval
+harness are implemented and verified: server suite 371 tests green, SDK 27,
+stt 28, desktop-context plugin 10, electron node+web typechecks pass, biome
+clean. Implementation was done via scoped codex runs, each reviewed and
+independently verified.
+
+What remains is the manual, user-facing part of Phase 0 plus live
+evaluation:
+
+1. Enter the Deepgram and OpenAI API keys in Settings (the repo =.env= is
+   not read by the app). Select voice = deepgram/nova-3 and cleanup =
+   openai/gpt-5.6-luna, and confirm the model passes the models.dev support
+   check (otherwise cleanup silently no-ops).
+2. Install the GNOME extension: symlink =integrations/gnome-focus-bridge/=
+   to =~/.local/share/gnome-shell/extensions/freestyle-focus-bridge@freestyle-voice.dev=,
+   log out/in, =gnome-extensions enable freestyle-focus-bridge@freestyle-voice.dev=.
+3. Load =integrations/emacs/freestyle-context.el= in Emacs (requires
+   =server-start=).
+4. Link the desktop-context plugin (=corepack pnpm --filter
+   @freestyle-voice/plugin-desktop-context link=) and enable it.
+5. Record the corpus (=scripts/eval-context/record.sh=) and run the matrix
+   (=scripts/eval-context/README.md=).
+
+Known limitations recorded during implementation: streaming =final= exposes
+no separable raw transcript, so stream-mode raw-recall metrics are
+unavailable; the eval =baseline= and =vocab= configs share whatever static
+vocabulary exists (no per-request vocabulary disable); live GNOME/wezterm/
+Emacs collector behavior still needs a real desktop session to confirm.
+
 * The one design idea
 
 #+BEGIN_QUOTE
@@ -464,31 +495,31 @@ The Phase 1 core patch is exactly the upstream-proposable unit.
   indeed broken on GNOME 50 (expected).
 - [ ] Record the evaluation corpus (below) and capture baseline metrics: no
   context, vocabulary off and on.
-- [ ] Fix the empty =flake.nix= dev shell enough that node + pnpm come from
+- [X] Fix the empty =flake.nix= dev shell enough that node + pnpm come from
   it (small mkShell with nodejs and corepack) so builds are reproducible.
 
 ** Phase 1: core seam (server, the upstreamable patch)
-- [ ] =ContextSnapshot= zod schema in =packages/validations=, re-exported by
+- [X] =ContextSnapshot= zod schema in =packages/validations=, re-exported by
   the SDK.
-- [ ] =resolveRecognitionContext= hook in the SDK with the bounded-await
+- [X] =resolveRecognitionContext= hook in the SDK with the bounded-await
   contract, dispatched in batch, streaming (=start=, before
   =connectUpstream=, latched into the finalization closure), and
   =/api/post-process=.
-- [ ] =lib/recognition-context.ts=: parse, extract, rank, redact, merge.
+- [X] =lib/recognition-context.ts=: parse, extract, rank, redact, merge.
   Heavily unit-tested (extraction table tests, ranking, budgets, redaction).
-- [ ] Thread resolver output through =resolveAsrVocabularyBias= and into
+- [X] Thread resolver output through =resolveAsrVocabularyBias= and into
   =postProcess= / =buildRewritePrompt= (the =<context>= block).
-- [ ] Plugin-bias contract change at both route sites (merge through the
+- [X] Plugin-bias contract change at both route sites (merge through the
   resolver instead of replace), documented in the SDK hook docs.
-- [ ] Deepgram streaming keyterm cap -> URL byte budget, handshake verified.
-- [ ] Decouple ASR context from cleanup gating (server
+- [X] Deepgram streaming keyterm cap -> URL byte budget, handshake verified.
+- [X] Decouple ASR context from cleanup gating (server
   =effectiveAppContext()= and the client capture gate).
-- [ ] OpenAI cleanup =providerOptions= (reasoning none) + OpenAI =prewarm=
+- [X] OpenAI cleanup =providerOptions= (reasoning none) + OpenAI =prewarm=
   hook + wire the existing =AbortSignal= with a 10s timeout.
-- [ ] Extend pipeline latency logging (=includeTimings= on the Deepgram
+- [X] Extend pipeline latency logging (=includeTimings= on the Deepgram
   path, hook timing field).
-- [ ] New settings keys + minimal Experimental UI toggles.
-- [ ] Route tests: hook snapshot in -> bias out (all three routes), snapshot
+- [X] New settings keys + minimal Experimental UI toggles.
+- [X] Route tests: hook snapshot in -> bias out (all three routes), snapshot
   latching and isolation between recordings, warm reuse across context-free
   recordings, hook timeout behavior.
 
@@ -497,16 +528,16 @@ corpus WAV of "call getScreenContext with RUST_LOG equals debug" transcribes
 and cleans to the exact identifiers, on both batch and streaming paths.
 
 ** Phase 2: the desktop-context plugin
-- [ ] Freestyle FocusBridge GNOME extension (shell-version 50), NixOS
+- [X] Freestyle FocusBridge GNOME extension (shell-version 50), NixOS
   install/enable documented. Also wired into the client's
   =getLinuxFrontmostApp()= as the first Wayland probe.
-- [ ] =plugins/desktop-context/=: hook implementation, collector dispatch by
+- [X] =plugins/desktop-context/=: hook implementation, collector dispatch by
   focused window, per-collector timeouts, settings toggles via
   =ctx.settings=.
-- [ ] wezterm collector (=wezterm cli get-text=, active pane, bounded tail).
-- [ ] Emacs collector: =integrations/emacs/freestyle-context.el= (visible
+- [X] wezterm collector (=wezterm cli get-text=, active pane, bounded tail).
+- [X] Emacs collector: =integrations/emacs/freestyle-context.el= (visible
   windows first, then open buffers) + =emacsclient= invocation.
-- [ ] Collector latency logging.
+- [X] Collector latency logging.
 - [ ] Eval: context to ASR only, then ASR + cleanup, against baseline.
   Separately for terminal and Emacs corpora.
 

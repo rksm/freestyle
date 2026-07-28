@@ -1,0 +1,4 @@
+recordings/
+results/
+.snapshot.json
+.snapshot.json.*.tmp

@@ -1,0 +1,485 @@
+[
+  {
+    "id": "screen-context-rust-log",
+    "text": "Call getScreenContext with RUST_LOG=debug.",
+    "speak": "call get screen context with rust log equals debug",
+    "terms": ["getScreenContext", "RUST_LOG"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "freestyle: context collector"
+      },
+      "terminal": {
+        "paneText": "$ RUST_LOG=debug pnpm test\ncollector: calling getScreenContext\n"
+      }
+    }
+  },
+  {
+    "id": "accessibility-dump-result",
+    "text": "Inspect AccessibilityDumpResult before returning.",
+    "speak": "inspect accessibility dump result before returning",
+    "terms": ["AccessibilityDumpResult"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "accessibility.ts"
+      },
+      "editor": {
+        "file": "apps/electron/src/main/accessibility.ts",
+        "language": "typescript",
+        "visibleText": "type AccessibilityDumpResult = {\n  nodes: AccessibilityNode[];\n};",
+        "symbols": ["AccessibilityDumpResult", "AccessibilityNode"],
+        "openBuffers": ["accessibility.ts", "paste.ts"]
+      }
+    }
+  },
+  {
+    "id": "resolve-asr-vocabulary-bias",
+    "text": "Pass the snapshot to resolveAsrVocabularyBias.",
+    "speak": "pass the snapshot to resolve asr vocabulary bias",
+    "terms": ["resolveAsrVocabularyBias"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "vocabulary-bias.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/lib/vocabulary-bias.ts",
+        "language": "typescript",
+        "visibleText": "export function resolveAsrVocabularyBias(\n  providerId: string,\n  modelId: string,\n) {}",
+        "symbols": ["resolveAsrVocabularyBias", "buildAsrVocabularyBias"],
+        "openBuffers": ["vocabulary-bias.ts", "recognition-context.ts"]
+      }
+    }
+  },
+  {
+    "id": "pnpm-filter-server",
+    "text": "Run pnpm --filter @freestyle-voice/server test.",
+    "speak": "run pnpm dash dash filter at freestyle voice slash server test",
+    "terms": ["pnpm", "--filter", "@freestyle-voice/server"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "freestyle"
+      },
+      "terminal": {
+        "paneText": "$ pnpm --filter @freestyle-voice/server test\n\nTests  148 passed\n"
+      }
+    }
+  },
+  {
+    "id": "stream-route-path",
+    "text": "Open apps/server/src/routes/stream.ts.",
+    "speak": "open apps slash server slash src slash routes slash stream dot t s",
+    "terms": ["apps/server/src/routes/stream.ts"],
+    "tags": ["terminal", "path"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "rg stream route"
+      },
+      "terminal": {
+        "paneText": "$ rg session.ready apps/server/src/routes/stream.ts\napps/server/src/routes/stream.ts:183\n"
+      }
+    }
+  },
+  {
+    "id": "recognition-context-snapshot",
+    "text": "Latch one ContextSnapshot for the recording.",
+    "speak": "latch one context snapshot for the recording",
+    "terms": ["ContextSnapshot"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "context-snapshot.ts"
+      },
+      "editor": {
+        "file": "packages/sdk/src/context-snapshot.ts",
+        "language": "typescript",
+        "visibleText": "export interface ContextSnapshot {\n  capturedAt: number;\n}",
+        "symbols": ["ContextSnapshot"],
+        "openBuffers": ["context-snapshot.ts", "hooks.ts"]
+      }
+    }
+  },
+  {
+    "id": "recognition-context-hook",
+    "text": "Invoke resolveRecognitionContext before opening the provider.",
+    "speak": "invoke resolve recognition context before opening the provider",
+    "terms": ["resolveRecognitionContext"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "hooks.ts"
+      },
+      "editor": {
+        "file": "packages/sdk/src/hooks.ts",
+        "language": "typescript",
+        "visibleText": "resolveRecognitionContext?: Handler<ResolveRecognitionContextInput, Output>;",
+        "symbols": [
+          "resolveRecognitionContext",
+          "ResolveRecognitionContextInput"
+        ],
+        "openBuffers": ["hooks.ts", "registry.ts"]
+      }
+    }
+  },
+  {
+    "id": "snapshot-env-var",
+    "text": "Read FREESTYLE_EVAL_SNAPSHOT_FILE for every dictation.",
+    "speak": "read freestyle eval snapshot file for every dictation",
+    "terms": ["FREESTYLE_EVAL_SNAPSHOT_FILE"],
+    "tags": ["terminal", "settings"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "eval context"
+      },
+      "terminal": {
+        "paneText": "$ export FREESTYLE_EVAL_SNAPSHOT_FILE=/tmp/eval-snapshot.json\n"
+      }
+    }
+  },
+  {
+    "id": "audio-duration-header",
+    "text": "Set x-audio-duration-ms on the request.",
+    "speak": "set x audio duration m s on the request",
+    "terms": ["x-audio-duration-ms"],
+    "tags": ["http", "emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "transcribe.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/routes/transcribe.ts",
+        "language": "typescript",
+        "visibleText": "const h = c.req.header(\"x-audio-duration-ms\");",
+        "symbols": ["decodeAppContext"],
+        "openBuffers": ["transcribe.ts"]
+      }
+    }
+  },
+  {
+    "id": "session-ready-message",
+    "text": "Wait for session.ready before sending audio.",
+    "speak": "wait for session dot ready before sending audio",
+    "terms": ["session.ready"],
+    "tags": ["stream", "emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "streamer.ts"
+      },
+      "editor": {
+        "file": "apps/electron/src/renderer/src/lib/streamer.ts",
+        "language": "typescript",
+        "visibleText": "case \"session.ready\":\n  this.flushPendingChunks();",
+        "symbols": ["flushPendingChunks", "openWebSocket"],
+        "openBuffers": ["streamer.ts"]
+      }
+    }
+  },
+  {
+    "id": "audio-duration-ms",
+    "text": "Send audioDurationMs with the commit.",
+    "speak": "send audio duration m s with the commit",
+    "terms": ["audioDurationMs"],
+    "tags": ["stream", "emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "stream.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/routes/stream.ts",
+        "language": "typescript",
+        "visibleText": "case \"commit\":\n  audioDurationMs = msg.audioDurationMs;",
+        "symbols": ["audioDurationMs", "handleStart"],
+        "openBuffers": ["stream.ts"]
+      }
+    }
+  },
+  {
+    "id": "default-models",
+    "text": "Call getDefaultModels after loading settings.",
+    "speak": "call get default models after loading settings",
+    "terms": ["getDefaultModels"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "providers.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/lib/providers.ts",
+        "language": "typescript",
+        "visibleText": "export function getDefaultModels(): ModelDefaults {",
+        "symbols": ["getDefaultModels", "ModelDefaults"],
+        "openBuffers": ["providers.ts", "models.ts"]
+      }
+    }
+  },
+  {
+    "id": "build-recognition-context",
+    "text": "Build both outputs with buildRecognitionContext.",
+    "speak": "build both outputs with build recognition context",
+    "terms": ["buildRecognitionContext"],
+    "tags": ["emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "recognition-context.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/lib/recognition-context.ts",
+        "language": "typescript",
+        "visibleText": "export function buildRecognitionContext(opts: BuildOptions) {",
+        "symbols": ["buildRecognitionContext", "RecognitionContext"],
+        "openBuffers": ["recognition-context.ts"]
+      }
+    }
+  },
+  {
+    "id": "context-cleanup-setting",
+    "text": "Turn context_to_cleanup off for the ASR-only run.",
+    "speak": "turn context to cleanup off for the a s r only run",
+    "terms": ["context_to_cleanup"],
+    "tags": ["settings", "terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "settings"
+      },
+      "terminal": {
+        "paneText": "$ sqlite3 freestyle.db \"select value from settings where key='context_to_cleanup';\"\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "validations-package",
+    "text": "Re-export it from @freestyle-voice/validations.",
+    "speak": "re export it from at freestyle voice slash validations",
+    "terms": ["@freestyle-voice/validations"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "packages"
+      },
+      "terminal": {
+        "paneText": "$ pnpm --filter @freestyle-voice/validations test\nPASS context-snapshot.test.ts\n"
+      }
+    }
+  },
+  {
+    "id": "http-too-many-requests",
+    "text": "Return HTTP 429 when usage is exceeded.",
+    "speak": "return h t t p four twenty nine when usage is exceeded",
+    "terms": ["HTTP 429"],
+    "tags": ["http", "emacs"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "transcribe.ts"
+      },
+      "editor": {
+        "file": "apps/server/src/routes/transcribe.ts",
+        "language": "typescript",
+        "visibleText": "return c.json({ error: \"usage_exceeded\" }, 429); // HTTP 429",
+        "symbols": ["FreestyleCloudUsageError"],
+        "openBuffers": ["transcribe.ts"]
+      }
+    }
+  },
+  {
+    "id": "keyboard-shortcut",
+    "text": "Press Ctrl+Alt+Space to start recording.",
+    "speak": "press control alt space to start recording",
+    "terms": ["Ctrl+Alt+Space"],
+    "tags": ["shortcut"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Freestyle",
+        "windowTitle": "Keyboard shortcuts"
+      },
+      "focusText": {
+        "before": "Start or stop recording",
+        "selected": "Ctrl+Alt+Space",
+        "after": "Global shortcut",
+        "role": "entry"
+      }
+    }
+  },
+  {
+    "id": "nixos-gnome-wayland",
+    "text": "This runs on NixOS with GNOME Wayland.",
+    "speak": "this runs on nix o s with gnome wayland",
+    "terms": ["NixOS", "GNOME", "Wayland"],
+    "tags": ["desktop"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "NixOS: GNOME on Wayland"
+      },
+      "terminal": {
+        "paneText": "$ echo $XDG_SESSION_TYPE\nwayland\n# NixOS GNOME Wayland session\n"
+      }
+    }
+  },
+  {
+    "id": "wezterm-pane-text",
+    "text": "Use WezTerm pane text as terminal context.",
+    "speak": "use wez term pane text as terminal context",
+    "terms": ["WezTerm"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "wezterm cli get-text"
+      },
+      "terminal": {
+        "paneText": "$ wezterm cli get-text\nUse WezTerm pane text as terminal context.\n"
+      }
+    }
+  },
+  {
+    "id": "emacs-client",
+    "text": "Query Emacs through emacsclient --eval.",
+    "speak": "query emacs through emacs client dash dash eval",
+    "terms": ["Emacs", "emacsclient", "--eval"],
+    "tags": ["emacs", "terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "freestyle-context.el"
+      },
+      "editor": {
+        "file": "integrations/emacs/freestyle-context.el",
+        "language": "emacs-lisp",
+        "visibleText": ";; queried by emacsclient --eval\n(defun freestyle-context-snapshot () nil)",
+        "symbols": ["freestyle-context-snapshot"],
+        "openBuffers": ["freestyle-context.el"]
+      }
+    }
+  },
+  {
+    "id": "rust-backtrace-command",
+    "text": "Run RUST_BACKTRACE=1 pnpm test.",
+    "speak": "run rust backtrace equals one pnpm test",
+    "terms": ["RUST_BACKTRACE", "pnpm"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "server tests"
+      },
+      "terminal": {
+        "paneText": "$ RUST_BACKTRACE=1 pnpm test\nError: worker exited\nstack backtrace:\n"
+      }
+    }
+  },
+  {
+    "id": "feature-branch",
+    "text": "Switch to feat/context-aware-transcription.",
+    "speak": "switch to feat slash context aware transcription",
+    "terms": ["feat/context-aware-transcription"],
+    "tags": ["terminal"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "git branch"
+      },
+      "terminal": {
+        "paneText": "$ git switch feat/context-aware-transcription\nSwitched to branch 'feat/context-aware-transcription'\n"
+      }
+    }
+  },
+  {
+    "id": "control-weather",
+    "text": "The rain should stop before the afternoon walk.",
+    "speak": "the rain should stop before the afternoon walk",
+    "terms": [],
+    "tags": ["control"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "cache-maintenance.ts"
+      },
+      "editor": {
+        "file": "src/cache-maintenance.ts",
+        "language": "typescript",
+        "visibleText": "const retryBudget = CacheInvalidator.defaultBudget;",
+        "symbols": ["CacheInvalidator", "retryBudget"],
+        "openBuffers": ["cache-maintenance.ts"]
+      }
+    }
+  },
+  {
+    "id": "control-groceries",
+    "text": "Please add apples and oat milk to the shopping list.",
+    "speak": "please add apples and oat milk to the shopping list",
+    "terms": [],
+    "tags": ["control"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "WezTerm",
+        "windowTitle": "network diagnostics"
+      },
+      "terminal": {
+        "paneText": "$ QUIC_DEBUG=1 ./PacketInspector --trace-id 7f31\nhandshake complete\n"
+      }
+    }
+  },
+  {
+    "id": "control-meeting",
+    "text": "Move the team meeting to Friday morning.",
+    "speak": "move the team meeting to friday morning",
+    "terms": [],
+    "tags": ["control"],
+    "snapshot": {
+      "capturedAt": 0,
+      "app": {
+        "name": "Emacs",
+        "windowTitle": "renderer-state.ts"
+      },
+      "editor": {
+        "file": "src/renderer-state.ts",
+        "language": "typescript",
+        "visibleText": "hydrateRendererState(persistedWindowLayout);",
+        "symbols": ["hydrateRendererState", "persistedWindowLayout"],
+        "openBuffers": ["renderer-state.ts"]
+      }
+    }
+  }
+]
