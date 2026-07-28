@@ -51,6 +51,7 @@ import {
   supportsStreaming,
   voiceProviderCategory,
 } from "../lib/streaming-stt.js";
+import { logTranscriptionDebug } from "../lib/transcription-log.js";
 import { resolveAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 
 const log = createAppLogger("stream");
@@ -597,6 +598,25 @@ const stream = new Hono().get(
                     );
                   }
                 }
+                logTranscriptionDebug({
+                  source: "streaming",
+                  raw: rawText,
+                  cleaned: pp.cleaned,
+                  context: finalizationContext,
+                  timings: {
+                    contextMs: contextResolutionMs,
+                    sttMs: sttAfterCommitMs,
+                    ...(pp.timings
+                      ? {
+                          handoffMs: pp.timings.handoffMs,
+                          llmMs: pp.timings.llmMs,
+                        }
+                      : {}),
+                    totalMs: totalDurationMs,
+                  },
+                  voiceModel: voiceDefaults!.model_id,
+                  llmModel: pp.llmModel,
+                });
                 // A beforeCleanup/afterCleanup plugin may have consumed/aborted
                 // inside postProcess; blank the delivered text so a suppressed
                 // dictation isn't pasted, and skip telemetry/history for it —

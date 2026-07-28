@@ -46,6 +46,7 @@ import { CloudAuthError } from "../lib/streaming/providers/freestyle-cloud.js";
 import { getProvider } from "../lib/streaming/registry.js";
 import { stripProviderPrefix } from "../lib/streaming/types.js";
 import { getApiKeyForProvider } from "../lib/streaming-stt.js";
+import { logTranscriptionDebug } from "../lib/transcription-log.js";
 import { buildAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 import { isServerBinaryAvailable } from "../lib/whisper/binary.js";
 import { WHISPER_PROVIDER_ID } from "../lib/whisper/constants.js";
@@ -133,6 +134,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   let rawText: string;
+  let sttMs: number | undefined;
   let transcribeDurationInSeconds: number | undefined;
   const language = getLanguageSetting();
   const api = await createHookApi();
@@ -449,6 +451,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
         )
       ).text;
       transcribeDurationInSeconds = result.durationInSeconds;
+      sttMs = Date.now() - t0;
 
       log.debug(
         `STT took ${Date.now() - t0}ms | rawText=${JSON.stringify(rawText).slice(0, 120)}`,
@@ -541,6 +544,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
       language,
       source: "batch",
       recognitionContext: recognitionContext.cleanup,
+      includeTimings: true,
       api,
     });
   } catch (err) {
@@ -581,6 +585,22 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   log.debug(`total ${totalDurationMs}ms`);
+
+  logTranscriptionDebug({
+    source: "batch",
+    raw: rawText,
+    cleaned: pp.cleaned,
+    context: recognitionContext,
+    timings: {
+      ...(sttMs !== undefined ? { sttMs } : {}),
+      ...(pp.timings
+        ? { handoffMs: pp.timings.handoffMs, llmMs: pp.timings.llmMs }
+        : {}),
+      totalMs: totalDurationMs,
+    },
+    voiceModel,
+    llmModel: pp.llmModel,
+  });
 
   capture("transcription completed", {
     provider: voiceProvider,

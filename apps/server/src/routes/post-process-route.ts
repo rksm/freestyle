@@ -18,6 +18,7 @@ import { postProcess } from "../lib/post-process.js";
 import { getDefaultModels } from "../lib/providers.js";
 import { buildRecognitionContext } from "../lib/recognition-context.js";
 import { invalidateSession } from "../lib/sessions.js";
+import { logTranscriptionDebug } from "../lib/transcription-log.js";
 
 const postProcessRoute = new Hono().post(
   "/",
@@ -50,6 +51,7 @@ const postProcessRoute = new Hono().post(
         language,
         source: "multi_segment",
         recognitionContext: recognitionContext.cleanup,
+        includeTimings: true,
         api,
       });
     } catch (err) {
@@ -62,6 +64,20 @@ const postProcessRoute = new Hono().post(
       }
       throw err;
     }
+
+    logTranscriptionDebug({
+      source: "multi_segment",
+      raw: body.text,
+      cleaned: pp.cleaned,
+      context: recognitionContext,
+      timings: {
+        ...(pp.timings
+          ? { handoffMs: pp.timings.handoffMs, llmMs: pp.timings.llmMs }
+          : {}),
+      },
+      ...(voice ? { voiceModel: voice.model_id } : {}),
+      llmModel: pp.llmModel,
+    });
 
     // `beforeCleanup`/`afterCleanup` can consume/abort during the multi-segment
     // merge too; surface the disposition (blanking the text when terminal) and

@@ -39,6 +39,7 @@ import {
   PROXY_URL_SETTING,
 } from "../lib/network.js";
 import { capture } from "../lib/posthog.js";
+import { TRANSCRIPTION_DEBUG_LOG_SETTING } from "../lib/transcription-log.js";
 import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
 const settings = new Hono()
@@ -79,7 +80,8 @@ const settings = new Hono()
       key === CONTEXT_TO_CLEANUP_SETTING ||
       key === CONTEXT_SOURCE_WINDOW_SETTING ||
       key === CONTEXT_SOURCE_TERMINAL_SETTING ||
-      key === CONTEXT_SOURCE_EDITOR_SETTING
+      key === CONTEXT_SOURCE_EDITOR_SETTING ||
+      key === TRANSCRIPTION_DEBUG_LOG_SETTING
     ) {
       const parsed = booleanSettingSchema.safeParse(body.value);
       if (!parsed.success) {
