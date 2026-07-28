@@ -50,8 +50,11 @@ eval-context *ARGS:
     node scripts/eval-context/run.mjs {{ARGS}}
 
 # Install the built AppImage to the stable path the NixOS launcher and
-# desktop item point at (/etc/nixos/shared/linux/freestyle.nix).
-install-appimage:
+# desktop item point at (/etc/nixos/shared/linux/freestyle.nix), and sync
+# the /etc/nixos-managed pieces (GNOME extension, desktop-context plugin)
+# so they match the code the AppImage was built from. Synced files still
+# need a `just switch` in /etc/nixos to take effect.
+install-appimage: sync-gnome-extension sync-desktop-context-plugin
     #!/usr/bin/env sh
     set -e
     appimage=$(ls apps/electron/dist/Freestyle-*.AppImage 2>/dev/null | head -1)
