@@ -66,6 +66,23 @@ install-appimage: sync-gnome-extension sync-desktop-context-plugin
     chmod +x Freestyle.AppImage
     echo "Installed $appimage -> Freestyle.AppImage"
 
+# Pretty-print the per-dictation transcription debug log (enable it via the
+# transcription_debug_log setting). Pass -f to follow live.
+transcriptions *ARGS:
+    #!/usr/bin/env sh
+    set -e
+    file="${FREESTYLE_TRANSCRIPTION_LOG:-$HOME/.config/Freestyle/transcriptions.jsonl}"
+    if [ ! -e "$file" ]; then
+        echo "No log at $file" >&2
+        echo "Enable it, then dictate:" >&2
+        echo "  curl -X PUT http://127.0.0.1:4649/api/settings/transcription_debug_log -H 'content-type: application/json' -d '{\"value\":\"true\"}'" >&2
+        exit 1
+    fi
+    case "{{ARGS}}" in
+        *-f*) tail -n 200 -F "$file" | node scripts/format-transcription-log.mjs ;;
+        *) node scripts/format-transcription-log.mjs < "$file" ;;
+    esac
+
 # Sync the FocusBridge GNOME extension into the NixOS config repo
 # (installed system-wide via /etc/nixos/shared/linux-home/gnome.nix;
 # apply with `just switch` there, then log out/in to reload GNOME Shell).
