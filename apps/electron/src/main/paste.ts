@@ -8,6 +8,7 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { app, clipboard } from "electron";
+import { tryEmacsInsert } from "./emacs-insert.js";
 import { queryFocusBridge } from "./focus-bridge.js";
 import { isLinuxTerminalFocused } from "./linux-terminal-focus";
 import { getNativeBinaryPath } from "./native-binary";
@@ -578,6 +579,15 @@ async function doPasteIntoFocusedApp(
   text: string,
   beforePaste?: () => Promise<void> | void,
 ): Promise<void> {
+  // Apps we can insert into programmatically skip the clipboard and the
+  // synthetic keystroke entirely, so they neither clobber the user's clipboard
+  // nor depend on the compositor returning focus in time.
+  if (text?.trim() && (await tryEmacsInsert(text))) {
+    log.debug("delivered via emacsclient");
+    await beforePaste?.();
+    return;
+  }
+
   // Never log the transcript itself (it's persisted to the shared log file);
   // length is enough to diagnose paste issues.
   log.debug(`pasting ${text?.length ?? 0} chars`);

@@ -176,6 +176,35 @@ does not signal errors."
         (json-serialize snapshot))
     (error "{}")))
 
+(defun freestyle-insert-file (path)
+  "Insert the UTF-8 contents of PATH at point, then delete PATH.
+
+Freestyle calls this instead of synthesizing a paste keystroke: Emacs binds
+no paste to C-v, and clipboard round-trips are unreliable on Wayland. The
+text arrives through a file so no shell or Elisp string quoting can corrupt
+it.
+
+Inserts into the window the user is looking at (the minibuffer when one is
+active, matching where point is). Returns the number of characters inserted,
+or nil when the buffer is read-only or anything else fails, so the caller can
+fall back to its keystroke path."
+  (condition-case nil
+      (let* ((coding-system-for-read 'utf-8)
+             (text (with-temp-buffer
+                     (insert-file-contents path)
+                     (buffer-string)))
+             (window (freestyle-context--effective-window)))
+        (ignore-errors (delete-file path))
+        (when (and (window-live-p window) (> (length text) 0))
+          (with-selected-window window
+            (when buffer-read-only
+              (signal 'buffer-read-only nil))
+            (insert text)
+            (length text))))
+    (error
+     (ignore-errors (delete-file path))
+     nil)))
+
 (provide 'freestyle-context)
 
 ;;; freestyle-context.el ends here
