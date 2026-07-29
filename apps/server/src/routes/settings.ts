@@ -38,7 +38,6 @@ import {
   configureNetwork,
   PROXY_URL_SETTING,
 } from "../lib/network.js";
-import { capture } from "../lib/posthog.js";
 import { TRANSCRIPTION_DEBUG_LOG_SETTING } from "../lib/transcription-log.js";
 import { applyWhisperRetentionPolicy } from "../lib/whisper/server.js";
 
@@ -205,12 +204,6 @@ const settings = new Hono()
     // next download without an app restart.
     if (key === PROXY_URL_SETTING || key === CA_CERT_PATH_SETTING) {
       configureNetwork();
-    }
-
-    // Don't capture internal/system keys
-    const skipKeys = new Set(["posthog_device_id", "telemetry_enabled"]);
-    if (!skipKeys.has(key)) {
-      capture("setting updated", { key });
     }
 
     return c.json({ key, value: body.value });

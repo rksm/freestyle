@@ -8,7 +8,6 @@ import {
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { getDb } from "../lib/db.js";
-import { capture } from "../lib/posthog.js";
 import type { VocabularyRow } from "../lib/vocabulary.js";
 
 const ALLOWED_ORDER_COLUMNS = new Set(["created_at", "updated_at", "term"]);
@@ -107,8 +106,6 @@ const vocabulary = new Hono()
         .prepare(`INSERT INTO vocabulary (term, notes) VALUES (?, ?)`)
         .run(term, notes);
 
-      capture("vocabulary term added", { has_notes: notes !== null });
-
       return c.json(
         {
           id: result.lastInsertRowid,
@@ -155,7 +152,6 @@ const vocabulary = new Hono()
     const db = getDb();
     const id = Number(c.req.param("id"));
     db.prepare("DELETE FROM vocabulary WHERE id = ?").run(id);
-    capture("vocabulary term deleted", {});
     return c.json({ ok: true });
   })
   .post("/import", zValidator("json", importVocabularySchema), async (c) => {
@@ -188,8 +184,6 @@ const vocabulary = new Hono()
       db.exec("ROLLBACK");
       throw err;
     }
-
-    capture("vocabulary terms imported", { imported, skipped });
 
     return c.json({ imported, skipped });
   });

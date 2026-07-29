@@ -1,12 +1,13 @@
+import { createAppLogger } from "@freestyle-voice/utils";
 import { parseRetentionDays } from "@freestyle-voice/validations";
 import { getDb, readSetting } from "./db.js";
 import { countFixes } from "./fixes.js";
-import { capture, captureException } from "./posthog.js";
 
 export const HISTORY_PAUSED_SETTING_KEY = "history_paused";
 export const HISTORY_RETENTION_SETTING_KEY = "history_retention_days";
 
 const RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const log = createAppLogger("history");
 
 export interface RawHistoryEntry {
   rawText: string;
@@ -44,12 +45,6 @@ export function purgeExpiredHistory(): number {
     .run(`-${days} days`);
 
   const deleted = Number(result.changes);
-  if (deleted > 0) {
-    capture("history expired entries purged", {
-      deleted_count: deleted,
-      retention_days: days,
-    });
-  }
   return deleted;
 }
 
@@ -62,7 +57,11 @@ export function startHistoryRetentionSweep(): void {
     try {
       purgeExpiredHistory();
     } catch (err) {
-      captureException(err);
+      log.error(
+        `Failed to purge expired history: ${
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        }`,
+      );
     }
   };
 

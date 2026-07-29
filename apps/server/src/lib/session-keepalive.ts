@@ -4,7 +4,6 @@ import {
   fetchCloudUser,
   SESSION_LIFETIME_MS,
 } from "./freestyle-cloud.js";
-import { captureException } from "./posthog.js";
 import {
   getSession,
   invalidateSession,
@@ -72,7 +71,13 @@ export function startSessionKeepAlive(): void {
   if (keepAliveTimer) return;
 
   const tick = (): void => {
-    void renewSession().catch((err) => captureException(err));
+    void renewSession().catch((err) => {
+      log.warn(
+        `session renewal failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
   };
 
   tick();

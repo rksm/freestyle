@@ -48,6 +48,14 @@ describe("Root & Health", () => {
     expect(data).toEqual({ status: "ok", name: "freestyle" });
   });
 
+  it("does not expose telemetry or telemetry identity endpoints", async () => {
+    const telemetry = await json("/api/telemetry", { event: "test" });
+    const deviceId = await req("/api/device-id");
+
+    expect(telemetry.status).toBe(404);
+    expect(deviceId.status).toBe(404);
+  });
+
   it("POST /api/client-error requires a message", async () => {
     const res = await json("/api/client-error", { stack: "x" });
     expect(res.status).toBe(400);

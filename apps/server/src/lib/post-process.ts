@@ -30,7 +30,6 @@ import { getRewritePromptContext } from "./editor/rewrite-context.js";
 import {
   FREESTYLE_CLOUD_PROVIDER_ID,
   FreestyleCloudAuthError,
-  isTransientCloudError,
   postProcessWithFreestyleCloud,
 } from "./freestyle-cloud.js";
 import { getLlmProvider } from "./llm/registry.js";
@@ -41,7 +40,6 @@ import {
   plugins,
 } from "./plugins/index.js";
 import { createHookApi } from "./plugins/pipeline.js";
-import { capture, captureException } from "./posthog.js";
 import { createChatModel, getDefaultModels } from "./providers.js";
 import type { RecognitionContext } from "./recognition-context.js";
 import { getSessionToken } from "./sessions.js";
@@ -62,18 +60,9 @@ export interface PostProcessResult {
   outputTokens: number;
   costUsd: number;
   timings?: PostProcessTimings;
-  /** The resolved tone routing destination for analytics. */
-  destination?: string;
 }
 
-export type PostProcessSource =
-  | "batch"
-  | "multi_segment"
-  | "streaming"
-  | "streaming_handoff";
-
 export interface PostProcessOptions {
-  source?: PostProcessSource;
   language?: string;
   recognitionContext?: RecognitionContext["cleanup"];
   /** Return handoff/llm timing breakdown for pipeline logs. */
@@ -228,8 +217,6 @@ export async function postProcess(
   void ensureCleanupPromptConfigFresh();
 
   const normalizedRawText = sanitizeTranscriptText(rawText);
-  const source = options.source ?? "batch";
-  const ppStart = Date.now();
   const effectiveAppContext = resolveAppContextForCleanup(appContext);
   const parsedContext = parseAppContext(effectiveAppContext);
   const defaults = getDefaultModels();
@@ -239,8 +226,7 @@ export async function postProcess(
   let llmProvider: string | null = null;
   let llmModel: string | null = null;
   let costUsd = 0;
-  // Resolve tone-routing destination for analytics — computed once here so all
-  // branches (cloud, local-LLM, no-cleanup) can include it in capture calls.
+  // Resolve tone routing once so every cleanup branch uses the same destination.
   const { destination: resolvedDestination } = getRewritePromptContext(
     effectiveAppContext,
     getCleanupAppAssignments(),
@@ -337,16 +323,6 @@ export async function postProcess(
           cleanedText = sanitizeTranscriptText(result.cleaned);
         } catch (err) {
           if (err instanceof FreestyleCloudAuthError) throw err;
-          // Transient network faults / upstream 5xx aren't app defects.
-          if (!isTransientCloudError(err)) captureException(err);
-          capture("post process failed", {
-            provider: llm.provider,
-            model: llm.model_id,
-            source,
-            app_name: parsedContext?.appName,
-            destination: resolvedDestination,
-            has_app_context: !!effectiveAppContext,
-          });
           log.error(`Freestyle Cloud cleanup failed: ${err}`);
           cleanedText = normalizedRawText;
         }
@@ -445,19 +421,10 @@ export async function postProcess(
           cleanedText = result.cleaned;
         } else {
           const err = cleanupError;
-          if (!isTransientCloudError(err)) captureException(err);
           void plugins().emit({
             type: FreestyleEventType.PipelineError,
             stage: PipelineStage.Cleanup,
             message: err instanceof Error ? err.message : String(err),
-          });
-          capture("post process failed", {
-            provider: llm.provider,
-            model: llm.model_id,
-            source,
-            app_name: parsedContext?.appName,
-            destination: resolvedDestination,
-            has_app_context: !!effectiveAppContext,
           });
           log.error(`LLM cleanup failed: ${err}`);
           cleanedText = result.cleaned;
@@ -489,15 +456,6 @@ export async function postProcess(
     }
   }
 
-  capture("post process completed", {
-    source,
-    duration_ms: Date.now() - ppStart,
-    ...(llmModel ? { model: llmModel } : {}),
-    app_name: parsedContext?.appName,
-    destination: resolvedDestination,
-    has_app_context: !!effectiveAppContext,
-  });
-
   return {
     cleaned: cleanedText,
     llmProvider,
@@ -506,6 +464,5 @@ export async function postProcess(
     outputTokens,
     costUsd,
     ...(options.includeTimings ? { timings: { handoffMs, llmMs } } : {}),
-    destination: resolvedDestination,
   };
 }

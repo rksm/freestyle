@@ -1,12 +1,11 @@
 import { apiFetch } from "@renderer/lib/api";
 
 /**
- * Report a renderer-side error to the server, which always persists it to the
- * local diagnostic log file and (if telemetry is enabled) forwards it to
- * PostHog. Fire-and-forget — reporting must never interrupt the UI.
+ * Report a renderer-side error to the server diagnostic log.
+ * Fire-and-forget reporting must never interrupt the UI.
  *
  * Only the message, stack, and a small structured `context` are sent. Never
- * pass transcript text, clipboard content, or other PII as context.
+ * pass transcript text, clipboard content, or other sensitive data as context.
  */
 export function reportError(
   error: unknown,

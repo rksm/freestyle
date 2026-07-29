@@ -23,7 +23,6 @@ import {
   keyDisplayLabel,
   useHotkeyRecorder,
 } from "@renderer/hooks/use-hotkey-recorder";
-import { capture } from "@renderer/lib/analytics";
 import { getClient } from "@renderer/lib/api";
 import { defaultLanguage, ONBOARDING_LANGUAGES } from "@renderer/lib/languages";
 import {
@@ -36,7 +35,7 @@ import {
   type WhisperStatus,
 } from "@renderer/lib/models";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
-import { IS_LINUX, IS_MAC, IS_WINDOWS, PLATFORM } from "@renderer/lib/platform";
+import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@renderer/lib/platform";
 import { settingsQueryOptions } from "@renderer/lib/query";
 import { cn, ON_DEVICE_PHRASE } from "@renderer/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -138,7 +137,6 @@ export default function OnboardingPage(): React.JSX.Element {
 
   const handleHotkeyRecorded = useCallback((accelerator: string) => {
     setHotkey(accelerator);
-    capture("onboarding_hotkey_changed", { hotkey: accelerator });
     getClient()
       .api.settings[":key"].$put({
         param: { key: SETTINGS_KEYS.hotkey },
@@ -193,26 +191,6 @@ export default function OnboardingPage(): React.JSX.Element {
   useEffect(() => {
     return window.api?.onFullscreenChanged(setIsFullscreen);
   }, []);
-
-  // Analytics: entry + per-step views (drives the drop-off funnel).
-  const started = useRef(false);
-  useEffect(() => {
-    if (!started.current) {
-      started.current = true;
-      capture("onboarding_started", {
-        platform: PLATFORM,
-      });
-    }
-    capture("onboarding_step_viewed", { step });
-  }, [step]);
-
-  // Analytics: fire once each permission flips to granted.
-  useEffect(() => {
-    if (micStatus === "granted") capture("onboarding_mic_granted");
-  }, [micStatus]);
-  useEffect(() => {
-    if (accessibilityStatus) capture("onboarding_accessibility_granted");
-  }, [accessibilityStatus]);
 
   // Load models + keys
   useEffect(() => {
@@ -273,21 +251,16 @@ export default function OnboardingPage(): React.JSX.Element {
   const mlxResolved = !IS_MAC || mlxQuery.isFetched;
 
   const requestMic = useCallback(async () => {
-    capture("onboarding_mic_permission_clicked", { action: "allow" });
     const status = await requestMicAccess();
     if (status) setMicStatus(status);
   }, []);
 
   const recheckLinuxSetup = useCallback(async () => {
-    capture("onboarding_linux_setup_rechecked");
     const setup = await window.api?.checkLinuxSetup();
     if (setup) setLinuxSetup(setup);
   }, []);
 
   const openMicSettings = useCallback(() => {
-    capture("onboarding_mic_permission_clicked", {
-      action: "open_settings",
-    });
     window.api?.openMicSettings();
     const interval = setInterval(async () => {
       const mic = await window.api?.checkMicPermission();
@@ -300,7 +273,6 @@ export default function OnboardingPage(): React.JSX.Element {
   }, []);
 
   const openAccessibility = useCallback(() => {
-    capture("onboarding_accessibility_clicked");
     window.api?.openAccessibilitySettings();
     const interval = setInterval(async () => {
       const ok = await window.api?.checkAccessibilityPermission();
@@ -326,12 +298,6 @@ export default function OnboardingPage(): React.JSX.Element {
         },
       })
       .catch(() => {});
-    capture("onboarding_model_completed", {
-      model_id: model.model_id,
-      kind: "cloud",
-      provider: model.provider_id,
-      source: "selector",
-    });
   }, []);
 
   const selectCloudModel = useCallback(
@@ -355,7 +321,6 @@ export default function OnboardingPage(): React.JSX.Element {
       defId: string,
       name: string,
       engine?: "whisper" | "mlx",
-      source: "auto" | "selector" = "selector",
       makeDefault = true,
     ) => {
       if (makeDefault) {
@@ -383,16 +348,6 @@ export default function OnboardingPage(): React.JSX.Element {
           },
         })
         .catch(() => {});
-      if (makeDefault) {
-        // The funnel's model-step event: with auto-setup this fires for every
-        // user; `source` separates the silent default from explicit picks.
-        capture("onboarding_model_completed", {
-          model_id: `${provider}/${defId}`,
-          kind: "local",
-          provider,
-          source,
-        });
-      }
     },
     [],
   );
@@ -472,7 +427,6 @@ export default function OnboardingPage(): React.JSX.Element {
       recommended.defId,
       recommended.name,
       recommended.localEngine,
-      "auto",
       true,
     );
   }, [recommended, selectLocalModel, mlxResolved]);
@@ -506,34 +460,6 @@ export default function OnboardingPage(): React.JSX.Element {
   // back to the recommendation before the user has touched anything.
   const chosen = allVoiceItems.find((v) => v.selected) ?? recommended;
 
-  // Analytics: detect the chosen local model's download finishing or failing.
-  const chosenStatus = chosen?.kind === "local" ? chosen.status : undefined;
-  const chosenModelId = chosen?.modelId;
-  const prevDownload = useRef<{ id?: string; status?: string }>({});
-  useEffect(() => {
-    const prev = prevDownload.current;
-    prevDownload.current = { id: chosenModelId, status: chosenStatus };
-    // Only count transitions for the *same* model (not a re-selection).
-    if (
-      prev.id !== chosenModelId ||
-      !prev.status ||
-      prev.status === chosenStatus
-    )
-      return;
-    if (
-      chosenStatus === "ready" &&
-      (prev.status === "downloading" || prev.status === "verifying")
-    ) {
-      capture("onboarding_model_download_completed", {
-        model_id: chosenModelId,
-      });
-    } else if (chosenStatus === "error") {
-      capture("onboarding_model_download_failed", {
-        model_id: chosenModelId,
-      });
-    }
-  }, [chosenStatus, chosenModelId]);
-
   // Persist the language choice (the transcribe path reads it per request).
   const persistLanguage = useCallback((value: string) => {
     getClient()
@@ -547,7 +473,6 @@ export default function OnboardingPage(): React.JSX.Element {
   const saveLanguage = useCallback(
     (value: string) => {
       setLanguage(value);
-      capture("onboarding_language_changed", { language: value });
       persistLanguage(value);
     },
     [persistLanguage],
@@ -564,13 +489,11 @@ export default function OnboardingPage(): React.JSX.Element {
       .api.keys.$post({ json: { provider, key: key.trim() } })
       .catch(() => {});
     setApiKeys((prev) => new Set([...prev, provider]));
-    capture("onboarding_cloud_key_saved", { provider });
     if (selectedModel) commitCloudModel(selectedModel);
     return true;
   }, [apiKeyForm, selectedModel, commitCloudModel]);
 
   const finishSetup = useCallback(() => {
-    capture("onboarding_completed");
     window.api?.setOnboardingComplete();
     navigate("/today", { replace: true });
   }, [navigate]);
@@ -600,18 +523,11 @@ export default function OnboardingPage(): React.JSX.Element {
 
   const startLocalDownload = useCallback(() => {
     if (!localSetupModel?.defId || window.api?.isE2E) return;
-    capture("onboarding_model_download_started", {
-      model_id: localSetupModel.modelId,
-    });
     downloadLocalModel(localSetupModel.defId, localSetupModel.localEngine);
   }, [localSetupModel, downloadLocalModel]);
 
   const retryLocalDownload = useCallback(() => {
     if (!localSetupModel?.defId || window.api?.isE2E) return;
-    capture("onboarding_model_download_started", {
-      model_id: localSetupModel.modelId,
-      retry: true,
-    });
     downloadLocalModel(localSetupModel.defId, localSetupModel.localEngine);
   }, [localSetupModel, downloadLocalModel]);
 
@@ -637,10 +553,7 @@ export default function OnboardingPage(): React.JSX.Element {
             onOpenMicSettings={openMicSettings}
             onOpenAccessibility={openAccessibility}
             onRecheckLinuxSetup={recheckLinuxSetup}
-            onContinue={() => {
-              capture("onboarding_permissions_completed");
-              setStep("language");
-            }}
+            onContinue={() => setStep("language")}
           />
         )}
 
@@ -651,14 +564,10 @@ export default function OnboardingPage(): React.JSX.Element {
             localModel={localSetupModel}
             onDownloadLocal={startLocalDownload}
             onRetryLocal={retryLocalDownload}
-            onBack={() => {
-              capture("onboarding_language_back_clicked");
-              setStep("permissions");
-            }}
+            onBack={() => setStep("permissions")}
             onContinue={() => {
               // Persist even when the pre-selected locale was never clicked.
               persistLanguage(language);
-              capture("onboarding_language_completed", { language });
               setStep("tutorial");
             }}
           />
@@ -682,16 +591,9 @@ export default function OnboardingPage(): React.JSX.Element {
                   : "notReady"
                 : null
             }
-            onStartRecording={() => {
-              capture("onboarding_hotkey_change_started");
-              startHotkeyRecording();
-            }}
+            onStartRecording={startHotkeyRecording}
             onCancelRecording={cancelHotkeyRecording}
-            onDictation={() => capture("onboarding_dictation_tried")}
-            onBack={() => {
-              capture("onboarding_tutorial_back_clicked");
-              setStep("language");
-            }}
+            onBack={() => setStep("language")}
             onFinish={finishSetup}
           />
         )}
@@ -700,12 +602,7 @@ export default function OnboardingPage(): React.JSX.Element {
       {showSelector && (
         <ModelSelectorOverlay
           source={selectorSource}
-          onSourceChange={(s) => {
-            capture("onboarding_model_selector_source_changed", {
-              source: s,
-            });
-            setSelectorSource(s);
-          }}
+          onSourceChange={setSelectorSource}
           voiceItems={allVoiceItems}
           keyProviders={apiKeys}
           selectedCloud={selectedModel}
@@ -1065,19 +962,10 @@ function ModelSelectorOverlay({
   // Pick a cloud model: commit immediately when its key is already stored,
   // otherwise move into the focused key-entry view.
   const handleSelectCloud = (model: AvailableModel) => {
-    capture("onboarding_model_selected", {
-      model_id: model.model_id,
-      kind: "cloud",
-      provider: model.provider_id,
-      from: "selector",
-    });
     onSelectCloud(model);
     if (keyProviders.has(model.provider_id)) {
       onClose();
     } else {
-      capture("onboarding_cloud_key_entry_viewed", {
-        provider: model.provider_id,
-      });
       setView("key");
     }
   };
@@ -1088,12 +976,6 @@ function ModelSelectorOverlay({
     name: string,
     engine?: "whisper" | "mlx",
   ) => {
-    capture("onboarding_model_selected", {
-      model_id: `${engine === "mlx" ? "local-mlx" : "local-whisper"}/${defId}`,
-      kind: "local",
-      provider: engine === "mlx" ? "local-mlx" : "local-whisper",
-      from: "selector",
-    });
     onSelectLocal(defId, name, engine);
     onClose();
   };
@@ -1333,7 +1215,6 @@ function TutorialStep({
   finishBlockedReason,
   onStartRecording,
   onCancelRecording,
-  onDictation,
   onBack,
   onFinish,
 }: {
@@ -1349,18 +1230,13 @@ function TutorialStep({
   finishBlockedReason: "downloading" | "notReady" | null;
   onStartRecording: () => void;
   onCancelRecording: () => void;
-  onDictation: () => void;
   onBack: () => void;
   onFinish: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
   return (
     <div className="w-full max-w-[600px]">
-      <TutorialDemo
-        hotkey={hotkey}
-        interactive={modelReady}
-        onDictation={onDictation}
-      />
+      <TutorialDemo hotkey={hotkey} interactive={modelReady} />
 
       <ModelSetupPanel
         model={localModel}

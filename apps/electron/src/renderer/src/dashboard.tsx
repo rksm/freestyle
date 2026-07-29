@@ -52,8 +52,6 @@ function PagePad(): React.JSX.Element {
   );
 }
 
-// Analytics is captured server-side (see apps/server/src/lib/posthog.ts);
-// the renderer ships no analytics SDK.
 initApiBase();
 installGlobalErrorHandlers();
 

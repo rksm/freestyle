@@ -50,8 +50,7 @@ export class DeviceFlowError extends Error {
 /**
  * Thrown when Freestyle Cloud rejects a request because the user exhausted
  * their usage allowance (HTTP 429). Distinct from a generic request failure so
- * callers can surface an actionable "limit reached" message instead of a 500,
- * and so it is never reported to error tracking as an app defect.
+ * callers can surface an actionable "limit reached" message instead of a 500.
  */
 export class FreestyleCloudUsageError extends Error {
   constructor(readonly resetsAt: string | null = null) {
@@ -63,8 +62,7 @@ export class FreestyleCloudUsageError extends Error {
 /**
  * Thrown when Freestyle Cloud returns a non-OK response that isn't an auth
  * (401) or usage (429) failure. Carries the HTTP status so callers can tell an
- * upstream server fault (5xx) apart from a genuine app defect and avoid
- * reporting transient outages to error tracking.
+ * upstream server fault (5xx) apart from other request failures.
  */
 export class FreestyleCloudRequestError extends Error {
   constructor(
@@ -78,55 +76,11 @@ export class FreestyleCloudRequestError extends Error {
   }
 }
 
-const TRANSIENT_NETWORK_CODES = new Set([
-  "ECONNRESET",
-  "ECONNREFUSED",
-  "ETIMEDOUT",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EPIPE",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_SOCKET",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_BODY_TIMEOUT",
-]);
-
-/**
- * True when a request failed for reasons outside the desktop app's control:
- * transient network faults (connection resets, DNS hiccups, timeouts) or an
- * upstream 5xx response. `fetch` (undici) surfaces socket errors as a
- * `TypeError: fetch failed` with the real cause on `.cause`, and timeouts as an
- * abort — so we walk the cause chain looking for a known network code or abort.
- * These should be surfaced to the user but never captured as app defects.
- */
-export function isTransientCloudError(err: unknown): boolean {
-  if (err instanceof FreestyleCloudRequestError) return err.status >= 500;
-
-  const seen = new Set<unknown>();
-  let current: unknown = err;
-  while (current && typeof current === "object" && !seen.has(current)) {
-    seen.add(current);
-    const e = current as {
-      name?: unknown;
-      code?: unknown;
-      cause?: unknown;
-    };
-    if (typeof e.code === "string" && TRANSIENT_NETWORK_CODES.has(e.code)) {
-      return true;
-    }
-    if (e.name === "TimeoutError" || e.name === "AbortError") return true;
-    current = e.cause;
-  }
-  return false;
-}
-
 /**
  * Connection-level faults where the request never reached the server, so
- * retrying a non-idempotent POST is safe. This is deliberately narrower than
- * {@link TRANSIENT_NETWORK_CODES}: it excludes response-phase timeouts
- * (`UND_ERR_HEADERS_TIMEOUT`/`UND_ERR_BODY_TIMEOUT`) and generic aborts, where
- * the request may already be processing server-side and a retry could double
- * up (e.g. double-charge a transcribe).
+ * retrying a non-idempotent POST is safe. Response-phase timeouts and generic
+ * aborts are deliberately excluded because the request may already be
+ * processing server-side and a retry could double-charge a transcription.
  */
 const RETRIABLE_CONNECTION_CODES = new Set([
   "ECONNRESET",

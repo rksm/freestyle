@@ -42,15 +42,13 @@ volumes:
 
 ## Environment variables
 
-The Docker image sets `FREESTYLE_DB_PATH`, `HOST`, `PORT`, and `FREESTYLE_ENV` for you. `FREESTYLE_DB_PATH` is required — the server refuses to start without it (the image defaults it to `/data/freestyle.db`).
+The Docker image sets `FREESTYLE_DB_PATH`, `HOST`, and `PORT` for you. `FREESTYLE_DB_PATH` is required — the server refuses to start without it (the image defaults it to `/data/freestyle.db`).
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `FREESTYLE_DB_PATH` | `/data/freestyle.db` (in image) | Path to the SQLite database file. Required. The `/data` volume persists it across restarts. |
 | `PORT` | `4649` | Port to listen on. |
 | `HOST` | `0.0.0.0` | Interface to bind to. |
-| `FREESTYLE_ENV` | `production` | App environment flag. |
-| `DO_NOT_TRACK` | _(none)_ | Set to `1` to disable all telemetry. |
 
 ## Persistent data
 

@@ -1,6 +1,5 @@
 import { getDb } from "./db.js";
 import { revertFreestyleCloudDefaults } from "./freestyle-cloud-defaults.js";
-import { resetCloudIdentity } from "./posthog.js";
 
 export interface CloudUser {
   id: string;
@@ -52,7 +51,6 @@ export function clearSession(): void {
 
 export function invalidateSession(): void {
   clearSession();
-  resetCloudIdentity();
   revertFreestyleCloudDefaults();
 }
 

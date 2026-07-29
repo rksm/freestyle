@@ -49,7 +49,6 @@ const postProcessRoute = new Hono().post(
     try {
       pp = await postProcess(body.text, appContext, {
         language,
-        source: "multi_segment",
         recognitionContext: recognitionContext.cleanup,
         includeTimings: true,
         api,
