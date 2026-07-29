@@ -65,11 +65,18 @@ export async function initApiBase(): Promise<void> {
 export async function checkServerHealth(
   base: string,
   timeoutMs = HEALTH_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
     const res = await hc<AppType>(base).api.health.$get(
       {},
-      { init: { signal: AbortSignal.timeout(timeoutMs) } },
+      {
+        init: {
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+            : AbortSignal.timeout(timeoutMs),
+        },
+      },
     );
     if (!res.ok) return false;
     const data = await res.json();
@@ -102,7 +109,7 @@ export async function checkServerAuth(
 }
 
 /** Re-read the server location/token and verify it's reachable. */
-export async function refreshApiBase(): Promise<boolean> {
+export async function refreshApiBase(signal?: AbortSignal): Promise<boolean> {
   try {
     // Main returns an already-validated, normalized value.
     serverUrl = await window.api.getServerUrl();
@@ -121,7 +128,7 @@ export async function refreshApiBase(): Promise<boolean> {
       resolvedPort = DEFAULT_PORT;
     }
   }
-  return checkServerHealth(getApiBase(), HEALTH_TIMEOUT_MS);
+  return checkServerHealth(getApiBase(), HEALTH_TIMEOUT_MS, signal);
 }
 
 export function getClient() {

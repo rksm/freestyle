@@ -20,10 +20,14 @@ export class Recorder {
    * Reuses the existing stream when its tracks are still live to
    * avoid the costly getUserMedia() round-trip on repeated calls.
    */
-  async acquireStream(deviceId?: string | null): Promise<MediaStream> {
+  async acquireStream(
+    deviceId?: string | null,
+    signal?: AbortSignal,
+  ): Promise<MediaStream> {
     this.chunks = [];
     this.mediaRecorder = null;
 
+    signal?.throwIfAborted();
     if (this.hasLiveStream()) return this.stream!;
 
     const processing = {
@@ -31,8 +35,9 @@ export class Recorder {
       noiseSuppression: false,
       autoGainControl: false,
     };
+    let stream: MediaStream;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId
           ? { deviceId: { exact: deviceId }, ...processing }
           : processing,
@@ -43,20 +48,29 @@ export class Recorder {
         deviceId &&
         (name === "OverconstrainedError" || name === "NotFoundError")
       ) {
-        this.stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           audio: processing,
         });
       } else {
         throw e;
       }
     }
-    return this.stream;
+    if (signal?.aborted) {
+      for (const track of stream.getTracks()) track.stop();
+      signal.throwIfAborted();
+    }
+    this.stream = stream;
+    return stream;
   }
 
   /** Acquire the mic AND start a MediaRecorder to capture the recording. */
-  async start(deviceId?: string | null): Promise<MediaStream> {
+  async start(
+    deviceId?: string | null,
+    signal?: AbortSignal,
+  ): Promise<MediaStream> {
     this.chunks = [];
-    const stream = await this.acquireStream(deviceId);
+    const stream = await this.acquireStream(deviceId, signal);
+    signal?.throwIfAborted();
     this.mimeType = pickSupportedMime();
     this.mediaRecorder = new MediaRecorder(
       stream,

@@ -725,10 +725,20 @@ function handlePluginAction(
  * visible.  `null` when no deferred show is in progress.
  */
 let pillReadyPromise: Promise<void> | null = null;
+let pillOutputAbortController: AbortController | null = null;
+
+function beginPillOutputSession(): void {
+  pillOutputAbortController?.abort();
+  pillOutputAbortController = new AbortController();
+}
 
 function showPill(): void {
   // Already waiting for a freshly-created pill to finish loading.
   if (pillReadyPromise) return;
+
+  if (!mainWindow?.isVisible()) {
+    beginPillOutputSession();
+  }
 
   if (!mainWindow) {
     createAppWindow();
@@ -781,6 +791,7 @@ function registerPillEscape(): void {
   if (!globalShortcut.isRegistered("Escape")) {
     globalShortcut.register("Escape", () => {
       if (mainWindow?.isVisible()) {
+        pillOutputAbortController?.abort();
         mainWindow.webContents.send("pill:cancel");
       }
     });
@@ -1212,6 +1223,9 @@ async function deliverOutput(
   text: string,
   mode: typeof OutputMode.Paste | typeof OutputMode.Clipboard,
 ): Promise<void> {
+  const signal = pillOutputAbortController?.signal;
+  if (signal?.aborted) return;
+
   if (!text.trim()) {
     relayServerEvent({
       type: FreestyleEventType.OutputDelivered,
@@ -1223,14 +1237,20 @@ async function deliverOutput(
 
   try {
     if (mode === OutputMode.Paste) {
-      await pasteIntoFocusedApp(text, async () => {
-        hidePill();
-        await wait(0);
-      });
+      await pasteIntoFocusedApp(
+        text,
+        async () => {
+          hidePill();
+          await wait(0);
+        },
+        signal,
+      );
     } else {
+      signal?.throwIfAborted();
       clipboard.writeText(text);
     }
   } catch (err) {
+    if (signal?.aborted) return;
     // pasteIntoFocusedApp left the transcript on the clipboard — tell the user
     // instead of letting the dictation silently vanish.
     notifyPasteFailed();

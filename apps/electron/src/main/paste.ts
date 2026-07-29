@@ -565,8 +565,10 @@ let pasteChain: Promise<void> = Promise.resolve();
 export function pasteIntoFocusedApp(
   text: string,
   beforePaste?: () => Promise<void> | void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const run = (): Promise<void> => doPasteIntoFocusedApp(text, beforePaste);
+  const run = (): Promise<void> =>
+    doPasteIntoFocusedApp(text, beforePaste, signal);
   const result = pasteChain.then(run, run);
   pasteChain = result.then(
     () => undefined,
@@ -664,7 +666,10 @@ async function restoreWaylandClipboard(
 async function doPasteIntoFocusedApp(
   text: string,
   beforePaste?: () => Promise<void> | void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
+
   // Apps we can insert into programmatically skip the clipboard and the
   // synthetic keystroke entirely. The check must run AFTER the pill is hidden
   // and focus has moved back: on GNOME the pill holds keyboard focus while
@@ -673,7 +678,9 @@ async function doPasteIntoFocusedApp(
   if (process.platform === "linux" && isWaylandSession() && text?.trim()) {
     await beforePaste?.();
     beforePaste = undefined;
+    signal?.throwIfAborted();
     await waitForFocusToLeavePill();
+    signal?.throwIfAborted();
     if (await tryEmacsInsert(text)) {
       log.debug("delivered via emacsclient");
       return;
@@ -692,16 +699,20 @@ async function doPasteIntoFocusedApp(
   let waylandPrior: string | null = null;
   if (wayland) {
     waylandPrior = await wlPaste();
+    signal?.throwIfAborted();
     if (!(await setWaylandClipboardVerified(text))) {
+      signal?.throwIfAborted();
       clipboard.writeText(text);
     }
   } else {
+    signal?.throwIfAborted();
     clipboard.writeText(text);
   }
 
   let pasted = false;
   try {
     await beforePaste?.();
+    signal?.throwIfAborted();
 
     let method: PasteMethod = "legacy";
     switch (process.platform) {
@@ -725,8 +736,10 @@ async function doPasteIntoFocusedApp(
     await new Promise((r) => setTimeout(r, pasteSettleMs(method)));
   } finally {
     // When every paste backend failed, the clipboard is the only copy of the
-    // transcript the user still has — leave it there instead of restoring.
-    if (pasted) {
+    // transcript the user still has, so leave it there. Cancellation is
+    // different: restore the prior clipboard because the user explicitly
+    // discarded this output.
+    if (pasted || signal?.aborted) {
       if (wayland) {
         await restoreWaylandClipboard(waylandPrior, text);
       } else {

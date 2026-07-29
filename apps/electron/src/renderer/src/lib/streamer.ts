@@ -71,7 +71,8 @@ export class Streamer {
     this.sendJSON({ type: "context", context });
   }
 
-  async startCapture(stream: MediaStream): Promise<void> {
+  async startCapture(stream: MediaStream, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (!this.ws || this.ws.readyState > WebSocket.OPEN) {
       this.openWebSocket();
     }
@@ -87,10 +88,15 @@ export class Streamer {
       this.workletNode = null;
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
+    signal?.throwIfAborted();
 
     if (!this.workletReady) {
       await this.ctx.audioWorklet.addModule(getPCMProcessorUrl());
       this.workletReady = true;
+    }
+    if (signal?.aborted) {
+      this.stopCapture();
+      signal.throwIfAborted();
     }
 
     try {
@@ -130,6 +136,9 @@ export class Streamer {
 
   cancel(): void {
     this.stopCapture();
+    this.pendingChunks = [];
+    this.pcmChunks = [];
+    this.pcmSampleCount = 0;
     this.sendJSON({ type: "cancel" });
   }
 
