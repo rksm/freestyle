@@ -6,7 +6,7 @@ application when dictation starts. It can include:
 - focused application name, window title, and window class
 - the trailing 3,000 characters from the active WezTerm pane
 - the active Emacs file, language, visible text, symbols, and open buffers
-- up to 2,000 characters of visible Slack accessibility text
+- up to 2,000 characters of visible text from the active accessible document
 
 Each source defaults to enabled unless its global setting is exactly `"false"`:
 
@@ -20,11 +20,15 @@ The window collector requires the
 The editor collector additionally requires
 [`freestyle-context.el`](../../integrations/emacs/README.md) and a running Emacs
 server. WezTerm and Emacs context is collected only while that application is
-focused. Slack additionally needs GNOME toolkit accessibility enabled and must
-be launched with `GTK_MODULES=gail:atk-bridge` and
-`--force-renderer-accessibility`. The collector reads the names of visible
-list-item nodes from Slack's AT-SPI Collection API. Missing integrations and
-collector failures are ignored.
+focused. Other applications require GNOME toolkit accessibility and an
+AT-SPI document tree. The collector reads text nodes that intersect the active
+document's viewport. It excludes editable fields and password text.
+
+Slack is handled separately because it does not expose its message view as an
+accessible document. It must be launched with
+`GTK_MODULES=gail:atk-bridge` and `--force-renderer-accessibility`. The
+collector reads the names of visible list-item nodes from Slack's AT-SPI
+Collection API. Missing integrations and collector failures are ignored.
 
 ## Development
 

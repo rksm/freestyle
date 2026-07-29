@@ -57,10 +57,13 @@ vocabulary into both the ASR bias and a cleanup context block.
   =com.freestyle.FocusBridge=, VibeTyper-bridge fallback), wezterm pane text
   via =wezterm cli get-text=, Emacs via =emacsclient= calling
   =freestyle-context-snapshot= (visible windows first, then open buffers),
-  and visible Slack message list items via its AT-SPI Collection API. Slack
-  is launched with the GTK accessibility bridge and Chromium renderer
-  accessibility enabled. Everything uses =execFile= with per-collector
-  timeouts, and failures degrade to omitting the field.
+  visible text from the active AT-SPI document in applications such as
+  Firefox, and a Slack-specific fallback that reads visible message list
+  items. Slack is launched with the GTK accessibility bridge and Chromium
+  renderer accessibility enabled. The accessibility collector uses a direct
+  D-Bus connection to stay within the server's context deadline. Other
+  collectors use =execFile=. Every collector has a timeout, and failures
+  degrade to omitting the field.
 - Streaming specifics: the resolved bias joins the session-reuse
   fingerprint, so contextual terms force a fresh Deepgram socket per
   recording. Audio buffers while it connects (500-chunk route buffer), so
@@ -75,8 +78,7 @@ vocabulary into both the ASR bias and a cleanup context block.
 - Alignment decisions that shaped this: upstreamable seam + plugin (not
   fork-local core integration), terminal context to ASR and cleanup with
   redaction, Emacs prioritized, cleanup on with gpt-5.6-luna.
-- Deliberately deferred: general AT-SPI focused-text collection outside
-  Slack, OCR, and mid-stream keyterm updates (Deepgram Flux).
+- Deliberately deferred: OCR and mid-stream keyterm updates (Deepgram Flux).
 
 * What was implemented (commit map, branch =improvements=)
 
@@ -190,8 +192,9 @@ touching the respective areas.
    gpt-4.1-nano fallback.
 4. One observed =stt=12004ms= outlier (Deepgram commit timeout on a
    kept-warm socket). Watch for recurrence.
-5. Extend the Slack AT-SPI collector to browsers or other Electron apps only
-   if evaluation on those targets shows a gap.
+5. Evaluate the generic AT-SPI document collector in additional browsers and
+   Electron applications. Add app-specific fallbacks only where their
+   accessibility trees lack a document viewport.
 6. Optional: extract the core seam (sdk hook + resolver + route dispatch)
    into an upstream PR against freestyle-voice/freestyle.
 7. Eval reruns: =scripts/eval-context/README.md=. Run against a scratch

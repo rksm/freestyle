@@ -36,9 +36,11 @@
     "freestyle-voice": "workspace:*"
   },
   "devDependencies": {
+    "@particle/dbus-next": "^0.11.4",
     "@types/node": "^22.19.1",
     "pkgroll": "^2.27.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "x11": "^2.3.0"
   }
 }

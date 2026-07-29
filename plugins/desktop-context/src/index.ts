@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
+import dbus, { type MessageBus } from "@particle/dbus-next";
 import type {
   ContextSnapshot,
   Plugin,
@@ -13,8 +14,21 @@ const TERMINAL_SETTING = "context_source_terminal";
 const EDITOR_SETTING = "context_source_editor";
 const ACCESSIBILITY_SETTING = "context_source_accessibility";
 const ATSPI_ROOT = "/org/a11y/atspi/accessible/root";
-const ATSPI_SHOWING = 1 << 25;
-const ATSPI_LIST_ITEM_ROLE = 1;
+const ATSPI_SHOWING_STATE = 25;
+const ATSPI_ACCESSIBLE = "org.a11y.atspi.Accessible";
+const ATSPI_COLLECTION = "org.a11y.atspi.Collection";
+const ATSPI_COMPONENT = "org.a11y.atspi.Component";
+const ATSPI_TEXT = "org.a11y.atspi.Text";
+const DBUS_PROPERTIES = "org.freedesktop.DBus.Properties";
+const ACCESSIBILITY_TIMEOUT_MS = 180;
+// AT-SPI role numbers are stable protocol values. Document roles cover frame,
+// text, web, and email documents. Text roles intentionally omit entry and
+// password widgets.
+const DOCUMENT_ROLES = [82, 94, 95, 96];
+const TEXT_ROLES = [29, 43, 61, 73, 81, 83, 88, 116, 122, 123, 124];
+const ATSPI_EDITABLE_STATE = 7;
+const SLACK_LIST_ITEM_ROLE = 32;
+const MAX_ACCESSIBLE_NODES = 500;
 
 const BRIDGES = [
   {
@@ -241,47 +255,225 @@ async function emacsEditor(): Promise<ContextSnapshot["editor"]> {
   return decodeEditor(output);
 }
 
-function busctlData(output: string): unknown {
-  const value: unknown = JSON.parse(output);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("invalid busctl response");
-  }
-  return (value as { data?: unknown }).data;
+type AtspiReference = [service: string, path: string];
+type AtspiRect = [x: number, y: number, width: number, height: number];
+type DbusValue =
+  | string
+  | number
+  | boolean
+  | DbusValue[]
+  | Record<string, string>;
+
+async function dbusCall(
+  bus: MessageBus,
+  destination: string,
+  path: string,
+  interfaceName: string,
+  member: string,
+  signature = "",
+  body: DbusValue[] = [],
+): Promise<unknown[]> {
+  const reply = await bus.call(
+    new dbus.Message({
+      destination,
+      path,
+      interface: interfaceName,
+      member,
+      signature,
+      body,
+    }),
+  );
+  return (reply?.body ?? []) as unknown[];
 }
 
-function atspiApplications(output: string): string[] {
-  const data = busctlData(output);
-  if (!Array.isArray(data) || !Array.isArray(data[0])) {
-    throw new Error("invalid AT-SPI application list");
-  }
+function atspiReferences(value: unknown): AtspiReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is AtspiReference =>
+      Array.isArray(item) &&
+      typeof item[0] === "string" &&
+      typeof item[1] === "string",
+  );
+}
 
-  return data[0]
-    .map((reference) =>
-      Array.isArray(reference) && typeof reference[0] === "string"
-        ? reference[0]
-        : undefined,
+function atspiRect(value: unknown): AtspiRect | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    !value.every((item) => typeof item === "number")
+  ) {
+    return undefined;
+  }
+  return value as AtspiRect;
+}
+
+function bitMask(values: number[]): number[] {
+  const words = [0, 0, 0, 0];
+  for (const value of values) {
+    const index = Math.floor(value / 32);
+    const word = words[index];
+    if (word !== undefined) words[index] = word | (1 << (value % 32));
+  }
+  return words;
+}
+
+function includesState(value: unknown, state: number): boolean {
+  if (!Array.isArray(value)) return false;
+  const word = value[Math.floor(state / 32)];
+  return typeof word === "number" && (word & (1 << (state % 32))) !== 0;
+}
+
+function matchRule(roles: number[], states: number[] = []): DbusValue[] {
+  return [
+    states.length > 0 ? bitMask(states) : [],
+    1,
+    {},
+    1,
+    bitMask(roles),
+    roles.length > 1 ? 2 : 1,
+    [],
+    1,
+    false,
+  ];
+}
+
+async function collectionMatches(
+  bus: MessageBus,
+  reference: AtspiReference,
+  roles: number[],
+  options: { count?: number; sort?: number; states?: number[] } = {},
+): Promise<AtspiReference[]> {
+  const [matches] = await dbusCall(
+    bus,
+    reference[0],
+    reference[1],
+    ATSPI_COLLECTION,
+    "GetMatches",
+    "(aiia{ss}iaiiasib)uib",
+    [
+      matchRule(roles, options.states),
+      options.sort ?? 1,
+      options.count ?? 0,
+      true,
+    ],
+  );
+  return atspiReferences(matches);
+}
+
+async function accessibleName(
+  bus: MessageBus,
+  reference: AtspiReference,
+): Promise<string | undefined> {
+  const [variant] = await dbusCall(
+    bus,
+    reference[0],
+    reference[1],
+    DBUS_PROPERTIES,
+    "Get",
+    "ss",
+    [ATSPI_ACCESSIBLE, "Name"],
+  );
+  if (!variant || typeof variant !== "object" || !("value" in variant)) {
+    return undefined;
+  }
+  const value = (variant as { value?: unknown }).value;
+  return typeof value === "string" ? value : undefined;
+}
+
+async function componentExtents(
+  bus: MessageBus,
+  reference: AtspiReference,
+): Promise<AtspiRect | undefined> {
+  const [value] = await dbusCall(
+    bus,
+    reference[0],
+    reference[1],
+    ATSPI_COMPONENT,
+    "GetExtents",
+    "u",
+    [0],
+  );
+  return atspiRect(value);
+}
+
+async function accessibleStates(
+  bus: MessageBus,
+  reference: AtspiReference,
+): Promise<unknown> {
+  const [value] = await dbusCall(
+    bus,
+    reference[0],
+    reference[1],
+    ATSPI_ACCESSIBLE,
+    "GetState",
+  );
+  return value;
+}
+
+async function accessibleText(
+  bus: MessageBus,
+  reference: AtspiReference,
+): Promise<string | undefined> {
+  const [text, name] = await Promise.all([
+    dbusCall(
+      bus,
+      reference[0],
+      reference[1],
+      ATSPI_TEXT,
+      "GetText",
+      "ii",
+      [0, -1],
     )
-    .filter((value): value is string => value !== undefined);
+      .then(([value]) => (typeof value === "string" ? value : undefined))
+      .catch(() => undefined),
+    accessibleName(bus, reference).catch(() => undefined),
+  ]);
+  const normalizedText = text?.replaceAll("\uFFFC", " ").trim();
+  return normalizedText || name;
 }
 
-function busctlString(output: string): string | undefined {
-  const data = busctlData(output);
-  return typeof data === "string" ? data : undefined;
+function normalizedAppIdentifier(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-function atspiObjectPaths(output: string): string[] {
-  const data = busctlData(output);
-  if (!Array.isArray(data) || !Array.isArray(data[0])) {
-    throw new Error("invalid AT-SPI object list");
-  }
+function matchesApplicationName(name: string, identity: WindowIdentity) {
+  const candidate = normalizedAppIdentifier(name);
+  if (!candidate) return false;
+  return identity.identifiers.some((value) => {
+    const identifier = normalizedAppIdentifier(value);
+    if (!identifier) return false;
+    return (
+      identifier === candidate ||
+      identifier.endsWith(candidate) ||
+      candidate.endsWith(identifier)
+    );
+  });
+}
 
-  return data[0]
-    .map((reference) =>
-      Array.isArray(reference) && typeof reference[1] === "string"
-        ? reference[1]
-        : undefined,
-    )
-    .filter((value): value is string => value !== undefined);
+async function findAtspiApplication(
+  bus: MessageBus,
+  identity: WindowIdentity,
+): Promise<AtspiReference> {
+  const [children] = await dbusCall(
+    bus,
+    "org.a11y.atspi.Registry",
+    ATSPI_ROOT,
+    ATSPI_ACCESSIBLE,
+    "GetChildren",
+  );
+  const applications = atspiReferences(children);
+  const names = await Promise.all(
+    applications.map(async (reference) => ({
+      reference,
+      name: await accessibleName(bus, reference).catch(() => undefined),
+    })),
+  );
+  const application = names.find(
+    ({ name }) => name && matchesApplicationName(name, identity),
+  );
+  if (!application)
+    throw new Error("application accessibility tree unavailable");
+  return application.reference;
 }
 
 function boundedAccessibilityText(values: Array<string | undefined>) {
@@ -289,7 +481,7 @@ function boundedAccessibilityText(values: Array<string | undefined>) {
   const lines: string[] = [];
   for (const value of values) {
     if (typeof value !== "string") continue;
-    const text = value.replace(/\s+/g, " ").trim();
+    const text = value.replaceAll("\uFFFC", " ").replace(/\s+/g, " ").trim();
     if (!text || seen.has(text)) continue;
     seen.add(text);
     lines.push(text);
@@ -299,7 +491,136 @@ function boundedAccessibilityText(values: Array<string | undefined>) {
   return text || undefined;
 }
 
-async function slackVisibleText(): Promise<string> {
+async function slackVisibleText(
+  bus: MessageBus,
+  application: AtspiReference,
+): Promise<string> {
+  const messageObjects = await collectionMatches(
+    bus,
+    application,
+    [SLACK_LIST_ITEM_ROLE],
+    { states: [ATSPI_SHOWING_STATE] },
+  );
+  const messageNames = await Promise.all(
+    messageObjects.map((reference) =>
+      accessibleName(bus, reference).catch(() => undefined),
+    ),
+  );
+  const text = boundedAccessibilityText(messageNames);
+  if (!text) throw new Error("Slack accessibility tree is empty");
+  return text;
+}
+
+function intersects(first: AtspiRect, second: AtspiRect): boolean {
+  return (
+    first[2] > 0 &&
+    first[3] > 0 &&
+    second[2] > 0 &&
+    second[3] > 0 &&
+    first[0] < second[0] + second[2] &&
+    first[0] + first[2] > second[0] &&
+    first[1] < second[1] + second[3] &&
+    first[1] + first[3] > second[1]
+  );
+}
+
+async function activeDocument(
+  bus: MessageBus,
+  application: AtspiReference,
+): Promise<{ reference: AtspiReference; rect: AtspiRect }> {
+  const documents = await collectionMatches(bus, application, DOCUMENT_ROLES, {
+    count: 20,
+  });
+  const candidates = await Promise.all(
+    documents.map(async (reference) => ({
+      reference,
+      rect: await componentExtents(bus, reference).catch(() => undefined),
+    })),
+  );
+  const visible = candidates
+    .filter(
+      (
+        candidate,
+      ): candidate is { reference: AtspiReference; rect: AtspiRect } =>
+        candidate.rect !== undefined &&
+        candidate.rect[2] > 0 &&
+        candidate.rect[3] > 0,
+    )
+    .sort((a, b) => b.rect[2] * b.rect[3] - a.rect[2] * a.rect[3]);
+  const document = visible[0];
+  if (!document) throw new Error("active accessible document unavailable");
+  return document;
+}
+
+async function visibleDocumentText(
+  bus: MessageBus,
+  application: AtspiReference,
+): Promise<string> {
+  const document = await activeDocument(bus, application);
+  const [forward, backward] = await Promise.all([
+    collectionMatches(bus, document.reference, TEXT_ROLES, {
+      count: MAX_ACCESSIBLE_NODES,
+    }),
+    collectionMatches(bus, document.reference, TEXT_ROLES, {
+      count: MAX_ACCESSIBLE_NODES,
+      sort: 4,
+    }),
+  ]);
+  const references = new Map<string, AtspiReference>();
+  for (const reference of [...forward, ...backward]) {
+    references.set(`${reference[0]}\0${reference[1]}`, reference);
+  }
+  const candidates = await Promise.all(
+    [...references.values()].map(async (reference) => {
+      const [rect, states] = await Promise.all([
+        componentExtents(bus, reference).catch(() => undefined),
+        accessibleStates(bus, reference).catch(() => undefined),
+      ]);
+      return { reference, rect, states };
+    }),
+  );
+  const visible = candidates
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        reference: AtspiReference;
+        rect: AtspiRect;
+        states: unknown;
+      } =>
+        candidate.rect !== undefined &&
+        candidate.states !== undefined &&
+        !includesState(candidate.states, ATSPI_EDITABLE_STATE) &&
+        intersects(candidate.rect, document.rect),
+    )
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
+  const values = await Promise.all(
+    visible.map(({ reference }) => accessibleText(bus, reference)),
+  );
+  const text = boundedAccessibilityText(values);
+  if (!text) throw new Error("accessible document is empty");
+  return text;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("accessibility collector timed out")),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function accessibilityText(identity: WindowIdentity): Promise<string> {
   const addressOutput = await runFile(
     "gdbus",
     [
@@ -316,108 +637,21 @@ async function slackVisibleText(): Promise<string> {
   );
   const address = unwrapGdbusTuple(addressOutput);
   if (!address) throw new Error("AT-SPI bus unavailable");
-
-  const busctlArgs = ["--address", address, "--json=short"];
-  const applications = atspiApplications(
-    await runFile(
-      "busctl",
-      [
-        ...busctlArgs,
-        "call",
-        "org.a11y.atspi.Registry",
-        ATSPI_ROOT,
-        "org.a11y.atspi.Accessible",
-        "GetChildren",
-      ],
-      100,
-    ),
-  );
-  const names = await Promise.all(
-    applications.map(async (application) => {
-      try {
-        return {
-          application,
-          name: busctlString(
-            await runFile(
-              "busctl",
-              [
-                ...busctlArgs,
-                "get-property",
-                application,
-                ATSPI_ROOT,
-                "org.a11y.atspi.Accessible",
-                "Name",
-              ],
-              100,
-            ),
-          ),
-        };
-      } catch {
-        return { application, name: undefined };
-      }
-    }),
-  );
-  const slack = names.find(({ name }) => name?.toLowerCase().includes("slack"));
-  if (!slack) throw new Error("Slack accessibility tree unavailable");
-
-  const messageObjects = atspiObjectPaths(
-    await runFile(
-      "busctl",
-      [
-        ...busctlArgs,
-        "call",
-        slack.application,
-        ATSPI_ROOT,
-        "org.a11y.atspi.Collection",
-        "GetMatches",
-        "(aiia{ss}iaiiasib)uib",
-        "2",
-        String(ATSPI_SHOWING),
-        "0",
-        "1",
-        "0",
-        "1",
-        "4",
-        "0",
-        String(ATSPI_LIST_ITEM_ROLE),
-        "0",
-        "0",
-        "1",
-        "0",
-        "1",
-        "false",
-        "1",
-        "0",
-        "true",
-      ],
-      100,
-    ),
-  );
-  const messageNames = await Promise.all(
-    messageObjects.map(async (objectPath) => {
-      try {
-        return busctlString(
-          await runFile(
-            "busctl",
-            [
-              ...busctlArgs,
-              "get-property",
-              slack.application,
-              objectPath,
-              "org.a11y.atspi.Accessible",
-              "Name",
-            ],
-            100,
-          ),
-        );
-      } catch {
-        return undefined;
-      }
-    }),
-  );
-  const text = boundedAccessibilityText(messageNames);
-  if (!text) throw new Error("Slack accessibility tree is empty");
-  return text;
+  const bus = dbus.sessionBus({ busAddress: address });
+  bus.on("error", () => {});
+  try {
+    return await withTimeout(
+      (async () => {
+        const application = await findAtspiApplication(bus, identity);
+        return isSlack(identity)
+          ? slackVisibleText(bus, application)
+          : visibleDocumentText(bus, application);
+      })(),
+      ACCESSIBILITY_TIMEOUT_MS,
+    );
+  } finally {
+    bus.disconnect();
+  }
 }
 
 export default function desktopContextPlugin(_options?: PluginOptions): Plugin {
@@ -483,8 +717,10 @@ export default function desktopContextPlugin(_options?: PluginOptions): Plugin {
         } else if (sourceEnabled(EDITOR_SETTING) && isEmacs(identity)) {
           const editor = await collect("editor", emacsEditor);
           if (editor !== undefined) snapshot.editor = editor;
-        } else if (sourceEnabled(ACCESSIBILITY_SETTING) && isSlack(identity)) {
-          const before = await collect("accessibility", slackVisibleText);
+        } else if (sourceEnabled(ACCESSIBILITY_SETTING)) {
+          const before = await collect("accessibility", () =>
+            accessibilityText(identity),
+          );
           if (before !== undefined) snapshot.focusText = { before };
         }
 

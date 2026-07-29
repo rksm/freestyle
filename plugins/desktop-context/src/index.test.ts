@@ -10,10 +10,27 @@ import { createHookApi } from "freestyle-voice";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const execFileMock = vi.hoisted(() => vi.fn());
+const dbusCallMock = vi.hoisted(() => vi.fn());
+const dbusDisconnectMock = vi.hoisted(() => vi.fn());
+const dbusOnMock = vi.hoisted(() => vi.fn());
+const dbusSessionBusMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
+vi.mock("@particle/dbus-next", () => {
+  class Message {
+    constructor(value: Record<string, unknown>) {
+      Object.assign(this, value);
+    }
+  }
+  return {
+    default: {
+      Message,
+      sessionBus: dbusSessionBusMock,
+    },
+  };
+});
 
 import desktopContextPlugin from "./index.js";
 
@@ -22,6 +39,15 @@ type ExecCallback = (
   stdout: string,
   stderr: string,
 ) => void;
+
+interface MockDbusMessage {
+  destination: string;
+  path: string;
+  interface: string;
+  member: string;
+  signature: string;
+  body: unknown[];
+}
 
 function queueExec(stdout: string, error: ExecFileException | null = null) {
   execFileMock.mockImplementationOnce((...args: unknown[]) => {
@@ -47,8 +73,27 @@ function emacsResponse(payload: Record<string, unknown>): string {
   );
 }
 
-function busctlResponse(data: unknown): string {
-  return JSON.stringify({ type: "test", data });
+function mockAccessibilityTree(
+  applicationName: string,
+  handler: (message: MockDbusMessage) => unknown[],
+) {
+  dbusCallMock.mockImplementation(async (message: MockDbusMessage) => {
+    if (
+      message.destination === "org.a11y.atspi.Registry" &&
+      message.member === "GetChildren"
+    ) {
+      return {
+        body: [[["org.example.Accessible", "/org/a11y/atspi/accessible/root"]]],
+      };
+    }
+    if (
+      message.member === "Get" &&
+      message.path === "/org/a11y/atspi/accessible/root"
+    ) {
+      return { body: [{ value: applicationName }] };
+    }
+    return { body: handler(message) };
+  });
 }
 
 async function configuredPlugin(
@@ -101,6 +146,15 @@ async function resolve(
 describe("desktop context plugin", () => {
   beforeEach(() => {
     execFileMock.mockReset();
+    dbusCallMock.mockReset();
+    dbusDisconnectMock.mockReset();
+    dbusOnMock.mockReset();
+    dbusSessionBusMock.mockReset();
+    dbusSessionBusMock.mockReturnValue({
+      call: dbusCallMock,
+      disconnect: dbusDisconnectMock,
+      on: dbusOnMock,
+    });
   });
 
   it("unwraps the Freestyle FocusBridge tuple", async () => {
@@ -112,7 +166,9 @@ describe("desktop context plugin", () => {
       }),
     );
 
-    const snapshot = await resolve(await configuredPlugin());
+    const snapshot = await resolve(
+      await configuredPlugin({ context_source_accessibility: "false" }),
+    );
 
     expect(snapshot.app).toEqual({
       name: "org.mozilla.firefox",
@@ -212,11 +268,14 @@ describe("desktop context plugin", () => {
   });
 
   it("uses captured app context without querying current focus", async () => {
-    const snapshot = await resolve(await configuredPlugin(), {
-      appName: "Firefox",
-      windowTitle: "Fallback title",
-      bundleId: "org.mozilla.firefox",
-    });
+    const snapshot = await resolve(
+      await configuredPlugin({ context_source_accessibility: "false" }),
+      {
+        appName: "Firefox",
+        windowTitle: "Fallback title",
+        bundleId: "org.mozilla.firefox",
+      },
+    );
 
     expect(snapshot.app).toEqual({
       name: "Firefox",
@@ -276,20 +335,24 @@ describe("desktop context plugin", () => {
 
   it("collects visible Slack messages from its accessibility collection", async () => {
     queueExec("('unix:path=/run/user/1000/at-spi/bus',)\n");
-    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/root"]]]));
-    queueExec(busctlResponse("Slack"));
-    queueExec(
-      busctlResponse([
-        [
-          [":1.8", "/org/a11y/atspi/accessible/20"],
-          [":1.8", "/org/a11y/atspi/accessible/21"],
-          [":1.8", "/org/a11y/atspi/accessible/22"],
-        ],
-      ]),
-    );
-    queueExec(busctlResponse("github-feed GitHub"));
-    queueExec(busctlResponse("Alice: Please review resolveRecognitionContext"));
-    queueExec(busctlResponse("Alice: Please review resolveRecognitionContext"));
+    const names: Record<string, string> = {
+      "/org/a11y/atspi/accessible/20": "github-feed GitHub",
+      "/org/a11y/atspi/accessible/21":
+        "Alice: Please review resolveRecognitionContext",
+      "/org/a11y/atspi/accessible/22":
+        "Alice: Please review resolveRecognitionContext",
+    };
+    mockAccessibilityTree("Slack", (message) => {
+      if (message.member === "GetMatches") {
+        return [
+          Object.keys(names).map((path) => ["org.example.Accessible", path]),
+        ];
+      }
+      if (message.member === "Get") {
+        return [{ value: names[message.path] }];
+      }
+      throw new Error(`unexpected D-Bus call: ${message.member}`);
+    });
 
     const snapshot = await resolve(await configuredPlugin(), {
       appName: "Slack",
@@ -313,52 +376,122 @@ describe("desktop context plugin", () => {
         "org.a11y.Bus.GetAddress",
       ],
     ]);
-    expect(execFileMock.mock.calls[3]?.slice(0, 2)).toEqual([
-      "busctl",
-      [
-        "--address",
-        "unix:path=/run/user/1000/at-spi/bus",
-        "--json=short",
-        "call",
-        ":1.8",
-        "/org/a11y/atspi/accessible/root",
-        "org.a11y.atspi.Collection",
-        "GetMatches",
-        "(aiia{ss}iaiiasib)uib",
-        "2",
-        String(1 << 25),
-        "0",
-        "1",
-        "0",
-        "1",
-        "4",
-        "0",
-        "1",
-        "0",
-        "0",
-        "1",
-        "0",
-        "1",
-        "false",
-        "1",
-        "0",
-        "true",
-      ],
+    const getMatches = dbusCallMock.mock.calls.find(
+      ([message]) => message.member === "GetMatches",
+    )?.[0] as MockDbusMessage;
+    expect(getMatches.body).toEqual([
+      [[1 << 25, 0, 0, 0], 1, {}, 1, [0, 1, 0, 0], 1, [], 1, false],
+      1,
+      0,
+      true,
     ]);
+    expect(dbusSessionBusMock).toHaveBeenCalledWith({
+      busAddress: "unix:path=/run/user/1000/at-spi/bus",
+    });
+    expect(dbusDisconnectMock).toHaveBeenCalledOnce();
   });
 
   it("bounds Slack accessibility text to the trailing 2,000 characters", async () => {
     queueExec("('unix:path=/run/user/1000/at-spi/bus',)\n");
-    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/root"]]]));
-    queueExec(busctlResponse("Slack"));
-    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/20"]]]));
-    queueExec(busctlResponse("x".repeat(2_500)));
+    mockAccessibilityTree("Slack", (message) => {
+      if (message.member === "GetMatches") {
+        return [[["org.example.Accessible", "/org/a11y/atspi/accessible/20"]]];
+      }
+      if (message.member === "Get") {
+        return [{ value: "x".repeat(2_500) }];
+      }
+      throw new Error(`unexpected D-Bus call: ${message.member}`);
+    });
 
     const snapshot = await resolve(await configuredPlugin(), {
       appName: "com.slack.Slack",
     });
 
     expect(snapshot.focusText?.before).toBe("x".repeat(2_000));
+  });
+
+  it("collects visible text from the active accessible document", async () => {
+    queueExec("('unix:path=/run/user/1000/at-spi/bus',)\n");
+    const document = "/org/a11y/atspi/accessible/document";
+    const first = "/org/a11y/atspi/accessible/20";
+    const second = "/org/a11y/atspi/accessible/21";
+    const hidden = "/org/a11y/atspi/accessible/22";
+    const editable = "/org/a11y/atspi/accessible/23";
+    const extents: Record<string, [number, number, number, number]> = {
+      [document]: [100, 100, 800, 600],
+      [first]: [120, 140, 300, 20],
+      [second]: [120, 180, 300, 20],
+      [hidden]: [120, 800, 300, 20],
+      [editable]: [120, 220, 300, 20],
+    };
+    mockAccessibilityTree("Firefox", (message) => {
+      if (
+        message.member === "GetMatches" &&
+        message.path === "/org/a11y/atspi/accessible/root"
+      ) {
+        return [[["org.example.Accessible", document]]];
+      }
+      if (message.member === "GetMatches" && message.path === document) {
+        return [
+          [first, second, hidden, editable].map((path) => [
+            "org.example.Accessible",
+            path,
+          ]),
+        ];
+      }
+      if (message.member === "GetExtents") {
+        return [extents[message.path]];
+      }
+      if (message.member === "GetState") {
+        return [[message.path === editable ? 1 << 7 : 0, 0]];
+      }
+      if (message.member === "GetText") {
+        const text =
+          message.path === first
+            ? "Firefox accessibility context"
+            : message.path === second
+              ? "\uFFFC"
+              : message.path === hidden
+                ? "hidden text"
+                : "editable text";
+        return [text];
+      }
+      if (message.member === "Get") {
+        return [
+          {
+            value:
+              message.path === second
+                ? "Visible fallback label"
+                : "duplicate accessible name",
+          },
+        ];
+      }
+      throw new Error(`unexpected D-Bus call: ${message.member}`);
+    });
+
+    const snapshot = await resolve(await configuredPlugin(), {
+      appName: "org.mozilla.firefox",
+      windowTitle: "Accessibility",
+    });
+
+    expect(snapshot.focusText).toEqual({
+      before: "Firefox accessibility context\nVisible fallback label",
+    });
+    const documentQueries = dbusCallMock.mock.calls
+      .map(([message]) => message as MockDbusMessage)
+      .filter(
+        (message) =>
+          message.member === "GetMatches" && message.path === document,
+      );
+    expect(documentQueries).toHaveLength(2);
+    expect(documentQueries.map((message) => message.body[1])).toEqual([1, 4]);
+    expect(
+      dbusCallMock.mock.calls.some(
+        ([message]) =>
+          [hidden, editable].includes(message.path) &&
+          message.member === "GetText",
+      ),
+    ).toBe(false);
   });
 
   it("omits terminal context when the WezTerm collector times out", async () => {
@@ -389,6 +522,7 @@ describe("desktop context plugin", () => {
   it("does not invoke FocusBridge when the window source is disabled", async () => {
     const plugin = await configuredPlugin({
       context_source_window: "false",
+      context_source_accessibility: "false",
     });
 
     const snapshot = await resolve(plugin, { appName: "Firefox" });
@@ -401,6 +535,7 @@ describe("desktop context plugin", () => {
     queueExec(gdbusTuple({ app: "wezterm", wmClass: "wezterm" }));
     const plugin = await configuredPlugin({
       context_source_terminal: "false",
+      context_source_accessibility: "false",
     });
 
     const snapshot = await resolve(plugin);
@@ -418,6 +553,7 @@ describe("desktop context plugin", () => {
     );
     const plugin = await configuredPlugin({
       context_source_editor: "false",
+      context_source_accessibility: "false",
     });
 
     const snapshot = await resolve(plugin);
