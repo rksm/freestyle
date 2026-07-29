@@ -47,6 +47,10 @@ function emacsResponse(payload: Record<string, unknown>): string {
   );
 }
 
+function busctlResponse(data: unknown): string {
+  return JSON.stringify({ type: "test", data });
+}
+
 async function configuredPlugin(
   values: Record<string, string> = {},
 ): Promise<Plugin> {
@@ -270,6 +274,93 @@ describe("desktop context plugin", () => {
     expect(execFileMock).toHaveBeenCalledTimes(1);
   });
 
+  it("collects visible Slack messages from its accessibility collection", async () => {
+    queueExec("('unix:path=/run/user/1000/at-spi/bus',)\n");
+    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/root"]]]));
+    queueExec(busctlResponse("Slack"));
+    queueExec(
+      busctlResponse([
+        [
+          [":1.8", "/org/a11y/atspi/accessible/20"],
+          [":1.8", "/org/a11y/atspi/accessible/21"],
+          [":1.8", "/org/a11y/atspi/accessible/22"],
+        ],
+      ]),
+    );
+    queueExec(busctlResponse("github-feed GitHub"));
+    queueExec(busctlResponse("Alice: Please review resolveRecognitionContext"));
+    queueExec(busctlResponse("Alice: Please review resolveRecognitionContext"));
+
+    const snapshot = await resolve(await configuredPlugin(), {
+      appName: "Slack",
+      windowTitle: "context-team",
+    });
+
+    expect(snapshot.focusText).toEqual({
+      before:
+        "github-feed GitHub\nAlice: Please review resolveRecognitionContext",
+    });
+    expect(execFileMock.mock.calls[0]?.slice(0, 2)).toEqual([
+      "gdbus",
+      [
+        "call",
+        "--session",
+        "--dest",
+        "org.a11y.Bus",
+        "--object-path",
+        "/org/a11y/bus",
+        "--method",
+        "org.a11y.Bus.GetAddress",
+      ],
+    ]);
+    expect(execFileMock.mock.calls[3]?.slice(0, 2)).toEqual([
+      "busctl",
+      [
+        "--address",
+        "unix:path=/run/user/1000/at-spi/bus",
+        "--json=short",
+        "call",
+        ":1.8",
+        "/org/a11y/atspi/accessible/root",
+        "org.a11y.atspi.Collection",
+        "GetMatches",
+        "(aiia{ss}iaiiasib)uib",
+        "2",
+        String(1 << 25),
+        "0",
+        "1",
+        "0",
+        "1",
+        "4",
+        "0",
+        "1",
+        "0",
+        "0",
+        "1",
+        "0",
+        "1",
+        "false",
+        "1",
+        "0",
+        "true",
+      ],
+    ]);
+  });
+
+  it("bounds Slack accessibility text to the trailing 2,000 characters", async () => {
+    queueExec("('unix:path=/run/user/1000/at-spi/bus',)\n");
+    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/root"]]]));
+    queueExec(busctlResponse("Slack"));
+    queueExec(busctlResponse([[[":1.8", "/org/a11y/atspi/accessible/20"]]]));
+    queueExec(busctlResponse("x".repeat(2_500)));
+
+    const snapshot = await resolve(await configuredPlugin(), {
+      appName: "com.slack.Slack",
+    });
+
+    expect(snapshot.focusText?.before).toBe("x".repeat(2_000));
+  });
+
   it("omits terminal context when the WezTerm collector times out", async () => {
     queueExec(gdbusTuple({ app: "wezterm", wmClass: "wezterm" }));
     queueExec("", new Error("timeout"));
@@ -333,5 +424,16 @@ describe("desktop context plugin", () => {
 
     expect(snapshot.editor).toBeUndefined();
     expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not query AT-SPI when the accessibility source is disabled", async () => {
+    const plugin = await configuredPlugin({
+      context_source_accessibility: "false",
+    });
+
+    const snapshot = await resolve(plugin, { appName: "Slack" });
+
+    expect(snapshot.focusText).toBeUndefined();
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 });

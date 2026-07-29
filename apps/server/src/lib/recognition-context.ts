@@ -311,13 +311,20 @@ export function buildRecognitionContext(opts: {
       MAX_CLEANUP_SPELLINGS,
     );
     const selected = snapshot?.focusText?.selected;
+    const surroundingText = [
+      snapshot?.focusText?.before,
+      snapshot?.focusText?.after,
+    ]
+      .filter((value): value is string => !!value?.trim())
+      .join("\n");
     const visibleText = snapshot?.editor?.visibleText;
     const paneText = snapshot?.terminal?.paneText;
-    const excerptSource = selected?.trim()
-      ? selected
-      : visibleText?.trim()
-        ? visibleText
-        : paneText;
+    const excerptSource = [
+      selected,
+      surroundingText,
+      visibleText,
+      paneText,
+    ].find((value) => value?.trim());
     const excerpt = excerptSource
       ? redactText(excerptSource).trim().slice(-MAX_EXCERPT_CHARS)
       : "";

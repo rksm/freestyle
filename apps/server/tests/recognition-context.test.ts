@@ -250,6 +250,23 @@ describe("buildRecognitionContext", () => {
     expect(context.cleanup?.spellings.length).toBeLessThanOrEqual(40);
     expect(context.cleanup?.excerpt?.length).toBeLessThanOrEqual(600);
   });
+
+  it("uses surrounding focused text as the cleanup excerpt", () => {
+    const context = buildRecognitionContext({
+      snapshot: {
+        capturedAt: 1,
+        focusText: {
+          before: "Please keep the spelling resolveRecognitionContext",
+          after: "in the response",
+        },
+      },
+    });
+
+    expect(context.cleanup?.excerpt).toBe(
+      "Please keep the spelling resolveRecognitionContext\nin the response",
+    );
+    expect(context.terms).toEqual(["resolveRecognitionContext"]);
+  });
 });
 
 describe("resolveAsrVocabularyBias with recognition context", () => {

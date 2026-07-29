@@ -11,6 +11,10 @@ import type {
 const WINDOW_SETTING = "context_source_window";
 const TERMINAL_SETTING = "context_source_terminal";
 const EDITOR_SETTING = "context_source_editor";
+const ACCESSIBILITY_SETTING = "context_source_accessibility";
+const ATSPI_ROOT = "/org/a11y/atspi/accessible/root";
+const ATSPI_SHOWING = 1 << 25;
+const ATSPI_LIST_ITEM_ROLE = 1;
 
 const BRIDGES = [
   {
@@ -179,6 +183,12 @@ function isEmacs(identity: WindowIdentity): boolean {
   );
 }
 
+function isSlack(identity: WindowIdentity): boolean {
+  return identity.identifiers.some((value) =>
+    /(^|[.\s_-])slack($|[.\s_-])/i.test(value),
+  );
+}
+
 async function weztermPaneText(): Promise<string> {
   const output = await runFile("wezterm", ["cli", "get-text"], 700);
   return output.slice(-3_000).trimEnd();
@@ -229,6 +239,185 @@ async function emacsEditor(): Promise<ContextSnapshot["editor"]> {
     800,
   );
   return decodeEditor(output);
+}
+
+function busctlData(output: string): unknown {
+  const value: unknown = JSON.parse(output);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid busctl response");
+  }
+  return (value as { data?: unknown }).data;
+}
+
+function atspiApplications(output: string): string[] {
+  const data = busctlData(output);
+  if (!Array.isArray(data) || !Array.isArray(data[0])) {
+    throw new Error("invalid AT-SPI application list");
+  }
+
+  return data[0]
+    .map((reference) =>
+      Array.isArray(reference) && typeof reference[0] === "string"
+        ? reference[0]
+        : undefined,
+    )
+    .filter((value): value is string => value !== undefined);
+}
+
+function busctlString(output: string): string | undefined {
+  const data = busctlData(output);
+  return typeof data === "string" ? data : undefined;
+}
+
+function atspiObjectPaths(output: string): string[] {
+  const data = busctlData(output);
+  if (!Array.isArray(data) || !Array.isArray(data[0])) {
+    throw new Error("invalid AT-SPI object list");
+  }
+
+  return data[0]
+    .map((reference) =>
+      Array.isArray(reference) && typeof reference[1] === "string"
+        ? reference[1]
+        : undefined,
+    )
+    .filter((value): value is string => value !== undefined);
+}
+
+function boundedAccessibilityText(values: Array<string | undefined>) {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const text = value.replace(/\s+/g, " ").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    lines.push(text);
+  }
+
+  const text = lines.join("\n").slice(-2_000).trim();
+  return text || undefined;
+}
+
+async function slackVisibleText(): Promise<string> {
+  const addressOutput = await runFile(
+    "gdbus",
+    [
+      "call",
+      "--session",
+      "--dest",
+      "org.a11y.Bus",
+      "--object-path",
+      "/org/a11y/bus",
+      "--method",
+      "org.a11y.Bus.GetAddress",
+    ],
+    100,
+  );
+  const address = unwrapGdbusTuple(addressOutput);
+  if (!address) throw new Error("AT-SPI bus unavailable");
+
+  const busctlArgs = ["--address", address, "--json=short"];
+  const applications = atspiApplications(
+    await runFile(
+      "busctl",
+      [
+        ...busctlArgs,
+        "call",
+        "org.a11y.atspi.Registry",
+        ATSPI_ROOT,
+        "org.a11y.atspi.Accessible",
+        "GetChildren",
+      ],
+      100,
+    ),
+  );
+  const names = await Promise.all(
+    applications.map(async (application) => {
+      try {
+        return {
+          application,
+          name: busctlString(
+            await runFile(
+              "busctl",
+              [
+                ...busctlArgs,
+                "get-property",
+                application,
+                ATSPI_ROOT,
+                "org.a11y.atspi.Accessible",
+                "Name",
+              ],
+              100,
+            ),
+          ),
+        };
+      } catch {
+        return { application, name: undefined };
+      }
+    }),
+  );
+  const slack = names.find(({ name }) => name?.toLowerCase().includes("slack"));
+  if (!slack) throw new Error("Slack accessibility tree unavailable");
+
+  const messageObjects = atspiObjectPaths(
+    await runFile(
+      "busctl",
+      [
+        ...busctlArgs,
+        "call",
+        slack.application,
+        ATSPI_ROOT,
+        "org.a11y.atspi.Collection",
+        "GetMatches",
+        "(aiia{ss}iaiiasib)uib",
+        "2",
+        String(ATSPI_SHOWING),
+        "0",
+        "1",
+        "0",
+        "1",
+        "4",
+        "0",
+        String(ATSPI_LIST_ITEM_ROLE),
+        "0",
+        "0",
+        "1",
+        "0",
+        "1",
+        "false",
+        "1",
+        "0",
+        "true",
+      ],
+      100,
+    ),
+  );
+  const messageNames = await Promise.all(
+    messageObjects.map(async (objectPath) => {
+      try {
+        return busctlString(
+          await runFile(
+            "busctl",
+            [
+              ...busctlArgs,
+              "get-property",
+              slack.application,
+              objectPath,
+              "org.a11y.atspi.Accessible",
+              "Name",
+            ],
+            100,
+          ),
+        );
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  const text = boundedAccessibilityText(messageNames);
+  if (!text) throw new Error("Slack accessibility tree is empty");
+  return text;
 }
 
 export default function desktopContextPlugin(_options?: PluginOptions): Plugin {
@@ -294,6 +483,9 @@ export default function desktopContextPlugin(_options?: PluginOptions): Plugin {
         } else if (sourceEnabled(EDITOR_SETTING) && isEmacs(identity)) {
           const editor = await collect("editor", emacsEditor);
           if (editor !== undefined) snapshot.editor = editor;
+        } else if (sourceEnabled(ACCESSIBILITY_SETTING) && isSlack(identity)) {
+          const before = await collect("accessibility", slackVisibleText);
+          if (before !== undefined) snapshot.focusText = { before };
         }
 
         output.snapshot = snapshot;
