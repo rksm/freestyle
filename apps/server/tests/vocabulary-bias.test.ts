@@ -101,11 +101,40 @@ describe("buildAsrVocabularyBias", () => {
       });
     });
 
-    it("cuts long streaming keyterm lists by URL bytes while preserving order", () => {
+    it("caps keyterms by Deepgram's 500-token limit with headroom", () => {
+      // Long identifier-like terms: ~100 chars each estimate to ~26 tokens,
+      // so far fewer than 100 fit in the 400-token budget.
       const input = Array.from(
         { length: 100 },
         (_, index) => `${index}-${"x".repeat(100)}`,
       );
+      const estimate = (term: string): number => Math.ceil(term.length / 4) + 1;
+
+      for (const streaming of [true, false]) {
+        const bias = buildAsrVocabularyBias(
+          "deepgram",
+          "nova-3-general",
+          input,
+          streaming,
+        );
+        expect(bias?.kind).toBe("deepgram-keyterms");
+        if (bias?.kind !== "deepgram-keyterms") continue;
+
+        expect(bias.terms.length).toBeLessThan(100);
+        expect(bias.terms).toEqual(input.slice(0, bias.terms.length));
+
+        const usedTokens = bias.terms.reduce(
+          (sum, term) => sum + estimate(term),
+          0,
+        );
+        const next = input[bias.terms.length]!;
+        expect(usedTokens).toBeLessThanOrEqual(400);
+        expect(usedTokens + estimate(next)).toBeGreaterThan(400);
+      }
+    });
+
+    it("keeps many short keyterms within the token budget", () => {
+      const input = Array.from({ length: 90 }, (_, index) => `t${index}`);
       const bias = buildAsrVocabularyBias(
         "deepgram",
         "nova-3-general",
@@ -114,20 +143,7 @@ describe("buildAsrVocabularyBias", () => {
       );
       expect(bias?.kind).toBe("deepgram-keyterms");
       if (bias?.kind !== "deepgram-keyterms") return;
-
-      expect(bias.terms.length).toBeGreaterThan(25);
-      expect(bias.terms.length).toBeLessThan(100);
-      expect(bias.terms).toEqual(input.slice(0, bias.terms.length));
-
-      const usedBytes = bias.terms.reduce(
-        (sum, term) => sum + encodeURIComponent(`keyterm=${term}`).length + 1,
-        0,
-      );
-      const next = input[bias.terms.length]!;
-      expect(usedBytes).toBeLessThanOrEqual(4_000);
-      expect(
-        usedBytes + encodeURIComponent(`keyterm=${next}`).length + 1,
-      ).toBeGreaterThan(4_000);
+      expect(bias.terms.length).toBe(90);
     });
 
     it("caps nova-3 batch keyterms at 100", () => {
