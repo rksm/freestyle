@@ -92,10 +92,12 @@ const DOM_MODIFIER_KEYS = new Set([
   "Option",
 ]);
 
-function modifiersFromEvent(e: KeyboardEvent): string[] {
+export function modifiersFromEvent(
+  e: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
+): string[] {
   const mods: string[] = [];
   if (e.ctrlKey) mods.push("Control");
-  if (e.metaKey) mods.push(IS_MAC ? "Command" : "Control");
+  if (e.metaKey) mods.push(IS_MAC ? "Command" : "Super");
   if (e.altKey) mods.push("Alt");
   if (e.shiftKey) mods.push("Shift");
   return MODIFIER_ORDER.filter((m) => mods.includes(m));
