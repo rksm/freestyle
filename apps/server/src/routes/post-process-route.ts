@@ -69,6 +69,7 @@ const postProcessRoute = new Hono().post(
       source: "multi_segment",
       raw: body.text,
       cleaned: pp.cleaned,
+      appContext,
       context: recognitionContext,
       timings: {
         ...(pp.timings

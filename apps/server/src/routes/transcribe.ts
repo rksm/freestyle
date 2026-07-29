@@ -590,6 +590,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     source: "batch",
     raw: rawText,
     cleaned: pp.cleaned,
+    appContext: rawAppContext,
     context: recognitionContext,
     timings: {
       ...(sttMs !== undefined ? { sttMs } : {}),

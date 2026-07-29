@@ -82,6 +82,7 @@ const stream = new Hono().get(
       | ((
           context: RecognitionContext | null,
           contextResolutionMs: number,
+          appContext: string | null,
         ) => void)
       | null = null;
     let audioDurationMs = 0;
@@ -344,9 +345,15 @@ const stream = new Hono().get(
       const token = ++readyToken;
       let capturedContext = recordingContext;
       let capturedContextResolutionMs = recordingContextResolutionMs;
-      captureUpstreamRecording = (context, contextResolutionMs) => {
+      let capturedAppContext = appContext;
+      captureUpstreamRecording = (
+        context,
+        contextResolutionMs,
+        recordingAppContext,
+      ) => {
         capturedContext = context;
         capturedContextResolutionMs = contextResolutionMs;
+        capturedAppContext = recordingAppContext;
       };
       const session = openStreamingSession({
         providerId: voice.provider,
@@ -373,6 +380,7 @@ const stream = new Hono().get(
             if (upstream !== session) return;
             const finalizationContext = capturedContext;
             const contextResolutionMs = capturedContextResolutionMs;
+            const finalizationAppContext = capturedAppContext;
             rawText = sanitizeTranscriptText(rawText);
             const upstreamRaw = upstreamRawText
               ? sanitizeTranscriptText(upstreamRawText)
@@ -602,6 +610,7 @@ const stream = new Hono().get(
                   source: "streaming",
                   raw: rawText,
                   cleaned: pp.cleaned,
+                  appContext: finalizationAppContext,
                   context: finalizationContext,
                   timings: {
                     contextMs: contextResolutionMs,
@@ -832,6 +841,7 @@ const stream = new Hono().get(
         captureUpstreamRecording?.(
           recordingContext,
           recordingContextResolutionMs,
+          appContext,
         );
         previousUpstream.reset();
         const token = ++readyToken;

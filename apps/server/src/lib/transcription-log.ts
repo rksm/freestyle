@@ -1,6 +1,7 @@
 import { appendFileSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createAppLogger } from "@freestyle-voice/utils";
+import { parseAppContext } from "freestyle-voice";
 import { readSetting } from "./db.js";
 import type { RecognitionContext } from "./recognition-context.js";
 
@@ -15,6 +16,8 @@ export interface TranscriptionDebugEntry {
   source: "batch" | "streaming" | "multi_segment";
   raw: string;
   cleaned: string;
+  /** Original per-recording context, reduced to the application name on disk. */
+  appContext?: string | null;
   /**
    * The full resolved recognition context: merged bias terms plus the
    * cleanup block (exact spellings + excerpt) injected into the rewrite
@@ -60,9 +63,16 @@ export function logTranscriptionDebug(entry: TranscriptionDebugEntry): void {
       // Missing file: nothing to rotate.
     }
 
+    const { appContext, ...record } = entry;
+    const parsedApp = parseAppContext(appContext);
+    const app = parsedApp?.appName ?? parsedApp?.bundleId;
     appendFileSync(
       path,
-      `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
+      `${JSON.stringify({
+        ts: new Date().toISOString(),
+        ...record,
+        ...(app ? { app } : {}),
+      })}\n`,
     );
   } catch (err) {
     log.warn(`failed to write transcription debug entry: ${err}`);

@@ -40,8 +40,9 @@ function fmtTermList(terms, shown = TERMS_SHOWN) {
 
 function printEntry(e) {
   const models = [e.voiceModel, e.llmModel].filter(Boolean).join(" → ");
+  const app = e.app ? `  ${bold(e.app)}` : "";
   console.log(
-    `${dim("───")} ${bold(fmtTime(e.ts))} ${cyan(e.source ?? "?")}  ${dim(models)}`,
+    `${dim("───")} ${bold(fmtTime(e.ts))} ${cyan(e.source ?? "?")}${app}  ${dim(models)}`,
   );
   const timings = fmtTimings(e.timings);
   if (timings) console.log(`  ${dim(timings)}`);
