@@ -53,8 +53,11 @@ const api = {
     ipcRenderer.invoke("cloud:prompt-sign-in"),
   cloudPromptUpgrade: (): Promise<boolean> =>
     ipcRenderer.invoke("cloud:prompt-upgrade"),
-  onHotkeyDown: (callback: () => void): (() => void) => {
-    const handler = (): void => callback();
+  onHotkeyDown: (
+    callback: (appContext: string | null) => void,
+  ): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, appContext: unknown) =>
+      callback(typeof appContext === "string" ? appContext : null);
     ipcRenderer.on("hotkey:down", handler);
     return () => ipcRenderer.removeListener("hotkey:down", handler);
   },

@@ -8,10 +8,7 @@ import {
   isRemoteServer,
   refreshApiBase,
 } from "@renderer/lib/api";
-import {
-  applyNeedsAppContextForCleanup,
-  refreshNeedsAppContextForCleanup,
-} from "@renderer/lib/cleanup-app-context";
+import { applyNeedsAppContextForCleanup } from "@renderer/lib/cleanup-app-context";
 import { Recorder } from "@renderer/lib/recorder";
 import { Streamer } from "@renderer/lib/streamer";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -226,6 +223,9 @@ export default function AppPage(): React.JSX.Element {
   // host two streaming sessions at once, so instead of dropping the press we
   // replay it once the pending commit resolves.
   const pendingReRecordRef = useRef(false);
+  const pendingReRecordContextRef = useRef<string | null | undefined>(
+    undefined,
+  );
 
   const isTranscriptionIdle = useCallback(
     (): boolean =>
@@ -817,7 +817,10 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Start recording ----
   const startRecording = useCallback(
-    async (forReRecord = false) => {
+    async (
+      forReRecord = false,
+      capturedAppContext?: string | null,
+    ): Promise<void> => {
       if (wantsMicRef.current) {
         return;
       }
@@ -834,31 +837,15 @@ export default function AppPage(): React.JSX.Element {
         .api.transcribe["pre-warm"].$post()
         .catch(() => {});
 
-      appContextRef.current = null;
-      // Streaming is always active — prime the streamer's context.
+      // A normal hotkey press carries the destination captured before the pill
+      // appeared. Re-recordings retain that destination unless a new hotkey
+      // press supplied a newer one.
+      if (capturedAppContext !== undefined) {
+        appContextRef.current = capturedAppContext;
+      }
       try {
-        getStreamer().setContext(null);
+        getStreamer().setContext(appContextRef.current);
       } catch {}
-
-      void refreshNeedsAppContextForCleanup().then((needsAppContext) => {
-        if (!needsAppContext || !wantsMicRef.current) return;
-        void window.api
-          ?.getFrontmostApp()
-          .then((app) => {
-            if (!wantsMicRef.current) return;
-            appContextRef.current = app;
-            try {
-              getStreamer().setContext(app);
-            } catch {}
-          })
-          .catch(() => {
-            if (!wantsMicRef.current) return;
-            appContextRef.current = null;
-            try {
-              getStreamer().setContext(null);
-            } catch {}
-          });
-      });
 
       setPillState("initializing");
       startBarAnimation("connecting");
@@ -1029,7 +1016,9 @@ export default function AppPage(): React.JSX.Element {
           // has already taken the mic.
           if (pendingReRecordRef.current && !wantsMicRef.current) {
             pendingReRecordRef.current = false;
-            void startRecording(true);
+            const context = pendingReRecordContextRef.current;
+            pendingReRecordContextRef.current = undefined;
+            void startRecording(true, context);
           }
         }),
       });
@@ -1254,14 +1243,14 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Hotkey handlers ----
   useEffect(() => {
-    const removeDown = window.api.onHotkeyDown(() => {
+    const removeDown = window.api.onHotkeyDown((appContext) => {
       // hidePill() clears pillActiveRef before React re-renders idle state.
       if (!pillActiveRef.current) {
         stateRef.current = "idle";
       }
       const s = stateRef.current;
       if (s === "idle") {
-        startRecording(false);
+        startRecording(false, appContext);
       } else if (s === "transcribing" && !wantsMicRef.current) {
         if (isTranscriptionIdle()) {
           hidePill();
@@ -1272,11 +1261,12 @@ export default function AppPage(): React.JSX.Element {
         // re-record until the commit resolves rather than dropping the press.
         if (streamResolverRef.current !== null) {
           pendingReRecordRef.current = true;
+          pendingReRecordContextRef.current = appContext;
           return;
         }
         // A previous batch transcription is still in flight; start a new
         // recording alongside it. Its result is queued and drained normally.
-        void startRecording(true);
+        void startRecording(true, appContext);
       }
     });
     const removeUp = window.api.onHotkeyUp(() => {

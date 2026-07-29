@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { ExecFileException } from "node:child_process";
 import type {
   ContextSnapshot,
@@ -38,6 +39,12 @@ function gdbusTuple(payload: Record<string, unknown>): string {
     .replaceAll("\\", "\\\\")
     .replaceAll("'", "\\'");
   return `('${json}',)\n`;
+}
+
+function emacsResponse(payload: Record<string, unknown>): string {
+  return JSON.stringify(
+    Buffer.from(JSON.stringify(payload)).toString("base64"),
+  );
 }
 
 async function configuredPlugin(
@@ -172,7 +179,7 @@ describe("desktop context plugin", () => {
     const editor = {
       file: "/work/context.ts",
       language: "typescript-ts",
-      visibleText: 'const greeting = "hello";\n',
+      visibleText: 'const greeting = "hello"; // Grüße — 你好\n',
       symbols: ["resolveContext", "decodeEditor"],
       openBuffers: ["context.ts", "PLAN.org"],
     };
@@ -183,22 +190,24 @@ describe("desktop context plugin", () => {
         gtkApplicationId: "org.gnu.emacs",
       }),
     );
-    queueExec(JSON.stringify(JSON.stringify(editor)));
+    queueExec(emacsResponse(editor));
 
     const snapshot = await resolve(await configuredPlugin());
 
     expect(snapshot.editor).toEqual(editor);
     expect(execFileMock.mock.calls[1]?.slice(0, 2)).toEqual([
       "emacsclient",
-      ["--timeout", "1", "--eval", "(freestyle-context-snapshot)"],
+      [
+        "--timeout",
+        "1",
+        "--eval",
+        "(base64-encode-string (freestyle-context-snapshot) t)",
+      ],
     ]);
     expect(execFileMock.mock.calls[1]?.[2]).toMatchObject({ timeout: 800 });
   });
 
-  it("uses client app context when both focus bridges fail", async () => {
-    queueExec("", new Error("timeout"));
-    queueExec("", new Error("timeout"));
-
+  it("uses captured app context without querying current focus", async () => {
     const snapshot = await resolve(await configuredPlugin(), {
       appName: "Firefox",
       windowTitle: "Fallback title",
@@ -211,6 +220,54 @@ describe("desktop context plugin", () => {
     });
     expect(snapshot.terminal).toBeUndefined();
     expect(snapshot.editor).toBeUndefined();
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("collects WezTerm text from the captured pre-pill identity", async () => {
+    queueExec("const resolveRecognitionContext = true;");
+
+    const snapshot = await resolve(await configuredPlugin(), {
+      appName: "org.wezfurlong.wezterm",
+      windowTitle: "shell",
+    });
+
+    expect(snapshot.app).toEqual({
+      name: "org.wezfurlong.wezterm",
+      windowTitle: "shell",
+    });
+    expect(snapshot.terminal?.paneText).toBe(
+      "const resolveRecognitionContext = true;",
+    );
+    expect(execFileMock.mock.calls[0]?.slice(0, 2)).toEqual([
+      "wezterm",
+      ["cli", "get-text"],
+    ]);
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects Emacs context from the captured pre-pill identity", async () => {
+    const editor = {
+      file: "/work/context.ts",
+      symbols: ["resolveRecognitionContext"],
+    };
+    queueExec(emacsResponse(editor));
+
+    const snapshot = await resolve(await configuredPlugin(), {
+      appName: "emacs",
+      windowTitle: "context.ts",
+    });
+
+    expect(snapshot.editor).toEqual(editor);
+    expect(execFileMock.mock.calls[0]?.slice(0, 2)).toEqual([
+      "emacsclient",
+      [
+        "--timeout",
+        "1",
+        "--eval",
+        "(base64-encode-string (freestyle-context-snapshot) t)",
+      ],
+    ]);
+    expect(execFileMock).toHaveBeenCalledTimes(1);
   });
 
   it("omits terminal context when the WezTerm collector times out", async () => {

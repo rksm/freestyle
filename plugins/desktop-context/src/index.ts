@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import type {
   ContextSnapshot,
@@ -127,27 +128,30 @@ function windowIdentity(
   focused: FocusedWindow | undefined,
   appContext: ResolveRecognitionContextInput["appContext"],
 ): WindowIdentity {
+  const capturedName =
+    identifier(appContext?.appName) ?? identifier(appContext?.bundleId);
   const focusedName =
     identifier(focused?.app) ??
     identifier(focused?.appId) ??
     identifier(focused?.name);
   const wmClass = identifier(focused?.wmClass);
-  const fallbackName =
-    identifier(appContext?.appName) ?? identifier(appContext?.bundleId);
-  const name = focusedName ?? wmClass ?? fallbackName ?? "Unknown";
+  const name = capturedName ?? focusedName ?? wmClass ?? "Unknown";
   const windowTitle =
+    boundedString(appContext?.windowTitle, 500) ??
     boundedString(focused?.title, 500) ??
     boundedString(focused?.windowTitle, 500) ??
-    boundedString(appContext?.windowTitle, 500);
+    undefined;
   const gtkApplicationId = identifier(focused?.gtkApplicationId);
-  const identifiers = focused
-    ? [
-        focusedName,
-        wmClass,
-        identifier(focused.wmClassInstance),
-        gtkApplicationId,
-      ]
-    : [fallbackName, identifier(appContext?.bundleId)];
+  const identifiers = capturedName
+    ? [capturedName, identifier(appContext?.bundleId)]
+    : focused
+      ? [
+          focusedName,
+          wmClass,
+          identifier(focused.wmClassInstance),
+          gtkApplicationId,
+        ]
+      : [];
 
   return {
     app: {
@@ -189,10 +193,12 @@ function boundedStringList(value: unknown): string[] | undefined {
 }
 
 function decodeEditor(output: string): ContextSnapshot["editor"] {
-  const json: unknown = JSON.parse(output.trim());
-  if (typeof json !== "string") throw new Error("invalid emacsclient response");
+  const encoded: unknown = JSON.parse(output.trim());
+  if (typeof encoded !== "string") {
+    throw new Error("invalid emacsclient response");
+  }
 
-  const value: unknown = JSON.parse(json);
+  const value: unknown = JSON.parse(Buffer.from(encoded, "base64").toString());
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("invalid Emacs context payload");
   }
@@ -214,7 +220,12 @@ function decodeEditor(output: string): ContextSnapshot["editor"] {
 async function emacsEditor(): Promise<ContextSnapshot["editor"]> {
   const output = await runFile(
     "emacsclient",
-    ["--timeout", "1", "--eval", "(freestyle-context-snapshot)"],
+    [
+      "--timeout",
+      "1",
+      "--eval",
+      "(base64-encode-string (freestyle-context-snapshot) t)",
+    ],
     800,
   );
   return decodeEditor(output);
@@ -263,9 +274,14 @@ export default function desktopContextPlugin(_options?: PluginOptions): Plugin {
 
     async resolveRecognitionContext(input, output) {
       try {
-        const focused = sourceEnabled(WINDOW_SETTING)
-          ? await collect("window", focusedWindow)
-          : undefined;
+        const hasCapturedIdentity = Boolean(
+          identifier(input.appContext?.appName) ??
+            identifier(input.appContext?.bundleId),
+        );
+        const focused =
+          sourceEnabled(WINDOW_SETTING) && !hasCapturedIdentity
+            ? await collect("window", focusedWindow)
+            : undefined;
         const identity = windowIdentity(focused, input.appContext);
         const snapshot: ContextSnapshot = {
           capturedAt: Date.now(),

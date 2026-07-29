@@ -33,7 +33,9 @@ declare global {
       openExternal: (url: string) => Promise<boolean>;
       cloudPromptSignIn: () => Promise<boolean>;
       cloudPromptUpgrade: () => Promise<boolean>;
-      onHotkeyDown: (callback: () => void) => () => void;
+      onHotkeyDown: (
+        callback: (appContext: string | null) => void,
+      ) => () => void;
       onHotkeyUp: (callback: () => void) => () => void;
       onPillCancel: (callback: () => void) => () => void;
       checkMicPermission: () => Promise<string>;

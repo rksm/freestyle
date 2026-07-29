@@ -1024,6 +1024,17 @@ async function getLinuxFrontmostApp(): Promise<string | null> {
   return getLinuxX11FrontmostApp();
 }
 
+async function getFrontmostApp(): Promise<string | null> {
+  try {
+    if (process.platform === "darwin") return await getMacFrontmostApp();
+    if (process.platform === "win32") return await getWindowsFrontmostApp();
+    if (process.platform === "linux") return await getLinuxFrontmostApp();
+  } catch {
+    // App context is best-effort and must never prevent dictation.
+  }
+  return null;
+}
+
 /**
  * Focused window via the FocusBridge extension, mapped to the app-context
  * shape the other probes return. See ./focus-bridge.ts for the query itself.
@@ -2329,22 +2340,7 @@ app.whenReady().then(async () => {
   );
 
   // -- Context-aware dictation: get frontmost app + browser context --
-  ipcMain.handle("system:frontmost-app", async () => {
-    try {
-      if (process.platform === "darwin") {
-        return await getMacFrontmostApp();
-      }
-      if (process.platform === "win32") {
-        return await getWindowsFrontmostApp();
-      }
-      if (process.platform === "linux") {
-        return await getLinuxFrontmostApp();
-      }
-    } catch {
-      // graceful fallback
-    }
-    return null;
-  });
+  ipcMain.handle("system:frontmost-app", getFrontmostApp);
 
   ipcMain.handle("system:open-app-candidates", async () => {
     try {
@@ -2504,32 +2500,45 @@ function hotkeyModeFromSettings(
   return settings[SETTINGS_KEYS.hotkeyMode] === "toggle" ? "toggle" : "hold";
 }
 
+const PRE_PILL_CONTEXT_TIMEOUT_MS = 250;
+let hotkeyIpcSequence = Promise.resolve();
+
+function enqueueHotkeyIpc(action: () => Promise<void> | void): void {
+  hotkeyIpcSequence = hotkeyIpcSequence.then(action, action).catch((error) => {
+    hotkeyLog.warn(
+      `Hotkey IPC failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+async function captureFrontmostAppBeforePill(): Promise<string | null> {
+  return Promise.race([
+    getFrontmostApp(),
+    wait(PRE_PILL_CONTEXT_TIMEOUT_MS).then(() => null),
+  ]);
+}
+
 function sendHotkeyDown(): void {
-  showPill();
-  relayServerEvent({ type: FreestyleEventType.RecordingStarted });
-  if (pillReadyPromise) {
-    // The pill window is still loading — defer IPC until it can receive it.
-    void pillReadyPromise.then(() => {
-      mainWindow?.webContents.send("hotkey:down");
-      settingsWindow?.webContents.send("hotkey:down");
-    });
-    return;
-  }
-  mainWindow?.webContents.send("hotkey:down");
-  settingsWindow?.webContents.send("hotkey:down");
+  enqueueHotkeyIpc(async () => {
+    // GNOME Wayland can focus the pill despite focusable:false. Capture the
+    // destination first and carry that immutable identity through the session.
+    const appContext = await captureFrontmostAppBeforePill();
+    showPill();
+    relayServerEvent({ type: FreestyleEventType.RecordingStarted });
+    if (pillReadyPromise) await pillReadyPromise;
+    mainWindow?.webContents.send("hotkey:down", appContext);
+    settingsWindow?.webContents.send("hotkey:down", appContext);
+  });
 }
 
 function sendHotkeyUp(): void {
-  if (pillReadyPromise) {
-    // Preserve IPC ordering: hotkey:up must arrive after hotkey:down.
-    void pillReadyPromise.then(() => {
-      mainWindow?.webContents.send("hotkey:up");
-      settingsWindow?.webContents.send("hotkey:up");
-    });
-    return;
-  }
-  mainWindow?.webContents.send("hotkey:up");
-  settingsWindow?.webContents.send("hotkey:up");
+  enqueueHotkeyIpc(async () => {
+    // The queue preserves key ordering when pre-pill context capture is still
+    // in flight or a newly-created pill has not finished loading.
+    if (pillReadyPromise) await pillReadyPromise;
+    mainWindow?.webContents.send("hotkey:up");
+    settingsWindow?.webContents.send("hotkey:up");
+  });
 }
 
 const HOTKEY_STUCK_TIMEOUT_MS = 5 * 60 * 1000;
