@@ -56,16 +56,18 @@ vocabulary into both the ASR bias and a cleanup context block.
   installed). Focused window via the FocusBridge GNOME extension (D-Bus,
   =com.freestyle.FocusBridge=, VibeTyper-bridge fallback), wezterm pane text
   via =wezterm cli get-text=, Emacs via =emacsclient= calling
-  =freestyle-context-snapshot= (visible windows first, then open buffers).
-  Everything execFile with per-collector timeouts, failures degrade to
-  omitting the field.
+  =freestyle-context-snapshot= (visible windows first, then open buffers),
+  and visible Slack message list items via its AT-SPI Collection API. Slack
+  is launched with the GTK accessibility bridge and Chromium renderer
+  accessibility enabled. Everything uses =execFile= with per-collector
+  timeouts, and failures degrade to omitting the field.
 - Streaming specifics: the resolved bias joins the session-reuse
   fingerprint, so contextual terms force a fresh Deepgram socket per
   recording. Audio buffers while it connects (500-chunk route buffer), so
   the reconnect stays off the commit-to-paste tail.
 - Settings (string "true"/"false", absent = enabled): =context_enabled=,
   =context_to_asr=, =context_to_cleanup= (core, with UI toggles),
-  =context_source_window/terminal/editor= (plugin),
+  =context_source_window/terminal/editor/accessibility= (plugin),
   =transcription_debug_log= (off by default).
 - Privacy rules: snapshots are bounded, never persisted, never in
   analytics. Normal logs carry counts and durations only. The opt-in debug
@@ -73,9 +75,8 @@ vocabulary into both the ASR bias and a cleanup context block.
 - Alignment decisions that shaped this: upstreamable seam + plugin (not
   fork-local core integration), terminal context to ASR and cleanup with
   redaction, Emacs prioritized, cleanup on with gpt-5.6-luna.
-- Deliberately deferred: AT-SPI focused-text collector (value-gated: with
-  =toolkit-accessibility= off zero running apps expose text, Emacs and
-  wezterm never will), OCR, mid-stream keyterm updates (Deepgram Flux).
+- Deliberately deferred: general AT-SPI focused-text collection outside
+  Slack, OCR, and mid-stream keyterm updates (Deepgram Flux).
 
 * What was implemented (commit map, branch =improvements=)
 
@@ -104,9 +105,9 @@ file, app launcher + desktop item (AppImage stays mutable at
 libraries for nix-ld, whisper/release toolchain in the freestyle flake
 (gcc, X11 chain, cmake, gnumake, fpm with USE_SYSTEM_FPM).
 
-Update loop after code changes: =just release && just install-appimage=
-(also syncs extension + plugin copies into /etc/nixos), then =just switch=
-there only when those synced files changed.
+Update loop after code changes: =just install= (also syncs extension +
+plugin copies into =/etc/nixos=), then =just switch= there only when those
+synced files changed.
 
 * Evaluation results (scripts/eval-context, 25-utterance corpus)
 
@@ -189,9 +190,8 @@ touching the respective areas.
    gpt-4.1-nano fallback.
 4. One observed =stt=12004ms= outlier (Deepgram commit timeout on a
    kept-warm socket). Watch for recurrence.
-5. Phase 3 (AT-SPI for browsers/Electron apps) only if eval on those
-   targets shows a gap. Requires =toolkit-accessibility= on and a D-Bus
-   library decision (dbus-next is unmaintained).
+5. Extend the Slack AT-SPI collector to browsers or other Electron apps only
+   if evaluation on those targets shows a gap.
 6. Optional: extract the core seam (sdk hook + resolver + route dispatch)
    into an upstream PR against freestyle-voice/freestyle.
 7. Eval reruns: =scripts/eval-context/README.md=. Run against a scratch
