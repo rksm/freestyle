@@ -580,12 +580,18 @@ async function doPasteIntoFocusedApp(
   beforePaste?: () => Promise<void> | void,
 ): Promise<void> {
   // Apps we can insert into programmatically skip the clipboard and the
-  // synthetic keystroke entirely, so they neither clobber the user's clipboard
-  // nor depend on the compositor returning focus in time.
-  if (text?.trim() && (await tryEmacsInsert(text))) {
-    log.debug("delivered via emacsclient");
+  // synthetic keystroke entirely. The check must run AFTER the pill is hidden
+  // and focus has moved back: on GNOME the pill holds keyboard focus while
+  // visible, so querying the bridge earlier reports Freestyle itself as the
+  // focused window and the programmatic route never triggers.
+  if (process.platform === "linux" && isWaylandSession() && text?.trim()) {
     await beforePaste?.();
-    return;
+    beforePaste = undefined;
+    await waitForFocusToLeavePill();
+    if (await tryEmacsInsert(text)) {
+      log.debug("delivered via emacsclient");
+      return;
+    }
   }
 
   // Never log the transcript itself (it's persisted to the shared log file);
