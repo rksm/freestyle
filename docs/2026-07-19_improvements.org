@@ -1,0 +1,228 @@
+#+TITLE: Freestyle Fork: Context-Aware Dictation, Implementation Handoff
+#+DATE: [2026-07-29 Wed]
+#+FILETAGS: :freestyle:dictation:asr:context:linux:handoff:
+
+* Purpose
+
+Handoff and reference for the context-aware transcription work on this fork.
+Supersedes =docs/PLAN.org= (deleted, full text recoverable from git history
+before commit removing it). Target machine: NixOS, GNOME Shell 50.1 on
+Wayland, wezterm, Emacs pgtk with a running server. Branch: =improvements=.
+
+* Current state
+
+Working end to end, verified live on this machine:
+
+- Dictation via hotkey -> streaming Deepgram nova-3 with per-dictation
+  desktop context as keyterms -> gpt-5.6-luna cleanup with a context block
+  -> delivery into the focused app. Steady-state commit-to-paste is about
+  1.1s (context ~20ms, stt ~175ms, llm ~930ms).
+- Delivery per target: Emacs via programmatic =emacsclient= insertion
+  (confirmed working). Terminals get Ctrl+Shift+V, everything else Ctrl+V,
+  both after a FocusBridge-verified focus wait and a wl-copy clipboard write
+  with read-back verification. The Wayland clipboard fix is installed but
+  awaits one final user confirmation in Slack/wezterm.
+- The app runs as a local anonymous user. Sign-in, accounts, billing, and
+  upgrade surfaces are removed. Server cloud code remains dormant.
+- Fixed eval corpus measured the feature: exact technical spellings went
+  from 3-13% (no context) to 70-73% (context to ASR + cleanup), zero
+  context-induced insertions, zero cleanup corruption.
+
+* Architecture (the essence of the deleted PLAN.org)
+
+One design idea:
+
+#+BEGIN_QUOTE
+A pre-recognition plugin hook produces one bounded ContextSnapshot per
+dictation. One core resolver turns that snapshot plus the persistent
+vocabulary into both the ASR bias and a cleanup context block.
+#+END_QUOTE
+
+- Hook: =resolveRecognitionContext= (packages/sdk). Server dispatches it in
+  all three routes (batch, streaming =start=, multi-segment merge) with a
+  hard 250ms deadline. Output is only a snapshot. The hook cannot
+  consume/abort the dictation. Snapshots are re-validated and bounded by the
+  zod schema in packages/validations.
+- Resolver: =apps/server/src/lib/recognition-context.ts=. Deterministic
+  identifier extraction, source-weighted ranking, secret redaction (key
+  shapes, NAME=value, PEM), merge order vocabulary -> plugin bias ->
+  contextual terms (order is priority, provider caps keep the first N).
+  Returns terms + noteText for ASR and =cleanup= {spellings, excerpt} for
+  the prompt.
+- Cleanup: =buildRewritePrompt= appends a delimited =<context>= block to the
+  USER prompt only (system prompt stays cacheable). Hard rules inside: use
+  matching exact spellings, never insert unspoken terms.
+- Collectors: =plugins/desktop-context= (server-process plugin, loose-file
+  installed). Focused window via the FocusBridge GNOME extension (D-Bus,
+  =com.freestyle.FocusBridge=, VibeTyper-bridge fallback), wezterm pane text
+  via =wezterm cli get-text=, Emacs via =emacsclient= calling
+  =freestyle-context-snapshot= (visible windows first, then open buffers).
+  Everything execFile with per-collector timeouts, failures degrade to
+  omitting the field.
+- Streaming specifics: the resolved bias joins the session-reuse
+  fingerprint, so contextual terms force a fresh Deepgram socket per
+  recording. Audio buffers while it connects (500-chunk route buffer), so
+  the reconnect stays off the commit-to-paste tail.
+- Settings (string "true"/"false", absent = enabled): =context_enabled=,
+  =context_to_asr=, =context_to_cleanup= (core, with UI toggles),
+  =context_source_window/terminal/editor= (plugin),
+  =transcription_debug_log= (off by default).
+- Privacy rules: snapshots are bounded, never persisted, never in
+  analytics. Normal logs carry counts and durations only. The opt-in debug
+  log is the single deliberate exception.
+- Alignment decisions that shaped this: upstreamable seam + plugin (not
+  fork-local core integration), terminal context to ASR and cleanup with
+  redaction, Emacs prioritized, cleanup on with gpt-5.6-luna.
+- Deliberately deferred: AT-SPI focused-text collector (value-gated: with
+  =toolkit-accessibility= off zero running apps expose text, Emacs and
+  wezterm never will), OCR, mid-stream keyterm updates (Deepgram Flux).
+
+* What was implemented (commit map, branch =improvements=)
+
+Feature, in dependency order:
+- =b7d51c6= feat(sdk): hook + bounded ContextSnapshot schema
+- =658ac21= feat(server): resolver + route integration + cleanup seam +
+  OpenAI latency work (reasoning none, prewarm, 10s timeout)
+- =ac7ba10= feat(electron): FocusBridge probes, context settings UI,
+  capture-gate decouple
+- =980f1e8= feat(plugins): desktop-context collectors + GNOME extension +
+  Emacs elisp
+- =b5cdc5f= chore: eval harness (scripts/eval-context) + dev shell + plan
+- =d00aaac= feat(electron): remove sign-in, local anonymous user (-2191 loc)
+- =c09e8f3= fix(server): Deepgram keyterm 500-token cap
+- =3548c7c= / =c325a9e= chore/feat: transcription debug log +
+  =just transcriptions= pretty-printer
+- =35506ac= / =fc1fb20= / =784b357= / =db7610d= / =a87b539= fix(electron):
+  the delivery chain (see issue log below)
+- justfile: dev/test/release/install-appimage/sync recipes +
+  =just transcriptions [-f]=
+
+NixOS repo (=/etc/nixos=, commits prefixed "linux:"): FocusBridge extension
+vendored + dconf-enabled, desktop-context plugin via home-manager loose
+file, app launcher + desktop item (AppImage stays mutable at
+=~/projects/ai/freestyle/Freestyle.AppImage=), electron/chromium runtime
+libraries for nix-ld, whisper/release toolchain in the freestyle flake
+(gcc, X11 chain, cmake, gnumake, fpm with USE_SYSTEM_FPM).
+
+Update loop after code changes: =just release && just install-appimage=
+(also syncs extension + plugin copies into /etc/nixos), then =just switch=
+there only when those synced files changed.
+
+* Evaluation results (scripts/eval-context, 25-utterance corpus)
+
+| config             | raw term recall | exact spelling final | insertions |
+|--------------------+-----------------+----------------------+------------|
+| baseline           | 3.3%            | 3.3-13.3%            | 0%         |
+| context to ASR     | 40.0%           | 36.7-56.7%           | 0%         |
+| context ASR+clean  | 40.0%           | 70.0-73.3%           | 0%         |
+
+Both stages matter: keyterms lift raw recall 3->40%, the cleanup context
+block converts most of the rest into exact final spellings. Harness caveats:
+streaming =final= exposes no separable raw transcript, and the
+baseline/vocab configs share whatever static vocabulary exists.
+
+* Issues encountered (the why behind the fixes)
+
+Every one of these cost real debugging time. Keep them in mind when
+touching the respective areas.
+
+1. *Deepgram keyterm limit is 500 TOKENS, not terms.* Subword tokens, so
+   identifiers count several times. Rich context (52 open Emacs buffers)
+   blew the old caps and failed the whole request with a 400 -> every
+   dictation silently empty. Now capped by token estimate (~4 chars/token,
+   400 budget) in =vocabulary-bias.ts=.
+2. *GNOME 50 has no sanctioned focused-window API.* =Shell.Eval= disabled,
+   =Introspect.GetWindows= portal-only. Everything focus-related must go
+   through the FocusBridge extension (=apps/electron/src/main/focus-bridge.ts=
+   is the one query home). This broke both app-context capture and
+   terminal-vs-normal chord selection (wezterm needs Ctrl+Shift+V).
+3. *The pill steals keyboard focus on GNOME Wayland* despite
+   =focusable:false= + =showInactive()= (xdg-shell has no never-focus
+   hint). Paste injected one tick after hiding it -> keystroke went
+   nowhere, intermittently. Fix: FocusBridge-polled wait (<=400ms) until
+   focus leaves Freestyle, before routing delivery. Corollary: any
+   focused-window query made while the pill is visible sees Freestyle
+   itself (this initially broke the Emacs detection).
+4. *XWayland clipboard writes do not reach the Wayland clipboard.* The
+   packaged Electron runs via XWayland inside the appimage-run bwrap;
+   =clipboard.writeText= landed on the X11 selection and targets pasted
+   stale Wayland content ("right chord, wrong payload"). Fix: =wl-copy=
+   write + =wl-paste= read-back verify before injecting.
+5. *Emacs binds no paste to Ctrl+V.* Delivery is programmatic:
+   =freestyle-insert-file= (in =integrations/emacs/freestyle-context.el=)
+   reads the transcript from a 0600 temp file and inserts at point,
+   refusing read-only buffers. Loaded by the user's own
+   =~/.emacs.d/lisp/init-audio.el= (do NOT wire it into /etc/nixos, that
+   was explicitly rejected).
+6. *NixOS toolchain gaps* broke builds at runtime, not compile time:
+   whisper.cpp source build needed cmake/gnumake (onboarding "Download
+   model" failure), electron-builder's downloaded fpm cannot exec on NixOS
+   (USE_SYSTEM_FPM + pkgs.fpm), the native paste helper needed explicit
+   -lXext -lXi so the Nix cc wrapper embeds their rpaths, and npm-download
+   Electron needed the Chromium runtime set in =programs.nix-ld.libraries=
+   for =just dev=.
+7. *Tone page saves appeared to revert.* Saves persisted server-side but
+   never updated the renderer's shared settings query cache (staleTime one
+   hour) -> remount re-seeded stale values. Pattern: mirror every save via
+   =queryClient.setQueryData= (settings.tsx always did, tone.tsx now does).
+8. *Debug visibility*: packaged builds log at info. =FREESTYLE_LOG_LEVEL=debug=
+   raises it at launch. The opt-in per-dictation JSONL
+   (=transcription_debug_log= setting -> =~/.config/Freestyle/transcriptions.jsonl=,
+   pretty-printed by =just transcriptions [-f]=) records raw, injected
+   context, cleaned text, and stage timings, and was the tool that cracked
+   most of the above.
+9. *appimage-run caches by content hash* (=~/.cache/appimage-run/<sha>/=).
+   A rebuilt AppImage only takes effect after fully quitting and
+   relaunching the app. Several "fix didn't work" moments were stale
+   instances.
+
+* Open items
+
+1. User confirmation that non-Emacs paste delivers the transcript after the
+   wl-copy fix (=a87b539=).
+2. Real-use context quality: live dictations so far had =terms: 0= (targets
+   without identifier-rich windows). Dictate into wezterm/Emacs with code
+   on screen and check =just transcriptions -f= shows terms/spellings and
+   correct exact spellings.
+3. LLM latency ~930ms warm is the tail dominator (budget hoped 300-700ms).
+   Levers: confirm reasoning suppression bites, shorter custom prompt,
+   gpt-4.1-nano fallback.
+4. One observed =stt=12004ms= outlier (Deepgram commit timeout on a
+   kept-warm socket). Watch for recurrence.
+5. Phase 3 (AT-SPI for browsers/Electron apps) only if eval on those
+   targets shows a gap. Requires =toolkit-accessibility= on and a D-Bus
+   library decision (dbus-next is unmaintained).
+6. Optional: extract the core seam (sdk hook + resolver + route dispatch)
+   into an upstream PR against freestyle-voice/freestyle.
+7. Eval reruns: =scripts/eval-context/README.md=. Run against a scratch
+   server instance (own FREESTYLE_DB_PATH + fixture plugin +
+   FREESTYLE_EVAL_SNAPSHOT_FILE exported to BOTH server and harness) to
+   avoid contaminating the real app and its settings.
+
+* Suggested skills
+
+- =org-mode= when editing this or other org docs.
+- =codex-implementation= for delegating bounded implementation tasks
+  (pattern used throughout: author a precise prompt, codex gpt-5.6-sol
+  high implements, review the diff and verify independently).
+- =use-nix= when commands are missing from the dev shell.
+- =ast-outline= before reading large unfamiliar server/electron files.
+
+* Key files
+
+- Core: =packages/sdk/src/hooks.ts= (hook contract),
+  =packages/validations/src/context-snapshot.ts= (bounding schema),
+  =apps/server/src/lib/recognition-context.ts= (resolver),
+  =apps/server/src/lib/plugins/pipeline.ts= (bounded dispatch),
+  =apps/server/src/lib/vocabulary-bias.ts= (provider caps incl. token cap).
+- Delivery: =apps/electron/src/main/paste.ts= (focus wait, wl-copy,
+  chord), =apps/electron/src/main/emacs-insert.ts=,
+  =apps/electron/src/main/focus-bridge.ts=,
+  =apps/electron/src/main/linux-terminal-focus.ts=.
+- Collectors: =plugins/desktop-context/src/index.ts=,
+  =integrations/gnome-focus-bridge/=, =integrations/emacs/freestyle-context.el=.
+- Ops: =justfile=, =scripts/eval-context/=, =scripts/format-transcription-log.mjs=,
+  =apps/server/src/lib/transcription-log.ts=.
+- NixOS: =/etc/nixos/shared/linux/freestyle.nix= (launcher/desktop item),
+  =shared/linux-home/freestyle.nix= (plugin), =shared/linux-home/gnome.nix=
+  (extension), =shared/linux/packages.nix= (nix-ld libraries).
