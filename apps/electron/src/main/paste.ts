@@ -8,6 +8,7 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { app, clipboard } from "electron";
+import { queryFocusBridge } from "./focus-bridge.js";
 import { isLinuxTerminalFocused } from "./linux-terminal-focus";
 import { getNativeBinaryPath } from "./native-binary";
 
@@ -341,11 +342,65 @@ async function pasteLinuxPortal(isTerminal: boolean): Promise<boolean> {
   }
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Upper bound on waiting for the compositor to move focus off the pill. */
+const FOCUS_RETURN_TIMEOUT_MS = 400;
+const FOCUS_POLL_INTERVAL_MS = 20;
+
+function isFreestyleWindow(window: {
+  app?: string;
+  wmClass?: string;
+  gtkApplicationId?: string;
+}): boolean {
+  const fields = [window.wmClass, window.app, window.gtkApplicationId];
+  return fields.some((value) => value && /freestyle/i.test(value));
+}
+
+/**
+ * Wayland has no "never focus me" surface hint, so on some compositors
+ * (notably GNOME) the dictation pill takes keyboard focus despite
+ * `focusable: false` + `showInactive()`. Hiding it hands focus back
+ * asynchronously — injecting the paste chord before that lands types into
+ * nothing, which is why pastes appeared to vanish intermittently.
+ *
+ * Poll the FocusBridge until the focused window is no longer ours. Returns
+ * immediately when focus is already elsewhere (the common case on
+ * compositors that honor the hint), and gives up after a bounded wait so a
+ * missing bridge only costs a short fixed delay.
+ */
+async function waitForFocusToLeavePill(): Promise<void> {
+  const deadline = Date.now() + FOCUS_RETURN_TIMEOUT_MS;
+  let sawBridge = false;
+
+  while (Date.now() < deadline) {
+    const focused = await queryFocusBridge();
+    if (focused) {
+      sawBridge = true;
+      if (!isFreestyleWindow(focused)) return;
+    } else if (sawBridge) {
+      // The bridge answered before but reports nothing focused now; keep
+      // waiting for the compositor to settle on the next window.
+    } else {
+      break;
+    }
+    await wait(FOCUS_POLL_INTERVAL_MS);
+  }
+
+  if (!sawBridge) {
+    // No bridge to observe focus with: fall back to a fixed settle delay.
+    await wait(FOCUS_POLL_INTERVAL_MS * 4);
+  }
+}
+
 async function pasteLinux(isTerminal: boolean): Promise<PasteMethod> {
   const binaryPath = getNativeBinaryPath("linux-fast-paste");
   const wayland = isWaylandSession();
 
   if (wayland) {
+    await waitForFocusToLeavePill();
     return pasteLinuxWayland(isTerminal);
   }
 
