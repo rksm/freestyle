@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { RecognitionContext } from "./recognition-context.js";
 import { stripProviderPrefix } from "./streaming/types.js";
 import {
@@ -14,19 +15,18 @@ export type AsrVocabularyBias =
   | { kind: "soniox-context"; terms: string[]; text?: string };
 
 const PROMPT_CHAR_BUDGET = 900;
-const DEEPGRAM_KEYTERM_MAX = 100;
+const DEEPGRAM_KEYTERM_MAX = 50;
 /**
  * Deepgram enforces "maximum number of tokens across all keyterms is 500"
- * (subword tokens, so identifiers count several times). Estimate
- * conservatively and stay under the limit with headroom — exceeding it fails
- * the whole request with a 400.
+ * and recommends focusing on 20-50 terms. Its tokenizer is not public, so use
+ * UTF-8 bytes as a strict upper bound for token pieces, plus one boundary unit
+ * per term. Keep headroom below 500 because exceeding it rejects the request.
  */
-const DEEPGRAM_KEYTERM_TOKEN_BUDGET = 400;
+const DEEPGRAM_KEYTERM_BUDGET = 400;
 const DEEPGRAM_STREAMING_KEYTERM_URL_BUDGET_BYTES = 4_000;
 
-/** Conservative Deepgram keyterm token estimate: ~4 chars per subword token. */
-function estimateDeepgramTokens(term: string): number {
-  return Math.ceil(term.length / 4) + 1;
+function deepgramKeytermCost(term: string): number {
+  return Buffer.byteLength(term, "utf8") + 1;
 }
 const SONIOX_TERM_MAX = 500;
 const SONIOX_TERMS_CHAR_BUDGET = 6000;
@@ -87,11 +87,11 @@ function expandNova2Keywords(terms: string[]): string[] {
 function capDeepgramKeyterms(terms: string[], streaming: boolean): string[] {
   const capped = capTerms(terms, DEEPGRAM_KEYTERM_MAX);
   const out: string[] = [];
-  let usedTokens = 0;
+  let usedBudget = 0;
   let usedBytes = 0;
   for (const term of capped) {
-    const termTokens = estimateDeepgramTokens(term);
-    if (usedTokens + termTokens > DEEPGRAM_KEYTERM_TOKEN_BUDGET) break;
+    const termCost = deepgramKeytermCost(term);
+    if (usedBudget + termCost > DEEPGRAM_KEYTERM_BUDGET) break;
     if (streaming) {
       // Streaming keyterms ride the WS URL; long query strings break the
       // handshake, so streaming additionally respects a byte budget.
@@ -102,7 +102,7 @@ function capDeepgramKeyterms(terms: string[], streaming: boolean): string[] {
       usedBytes += termBytes;
     }
     out.push(term);
-    usedTokens += termTokens;
+    usedBudget += termCost;
   }
   return out;
 }
