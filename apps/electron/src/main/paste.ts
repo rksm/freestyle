@@ -575,6 +575,92 @@ export function pasteIntoFocusedApp(
   return result;
 }
 
+const WL_CLIPBOARD_TIMEOUT_MS = 1500;
+const WL_VERIFY_DEADLINE_MS = 400;
+
+function wlCopy(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "pipe"] });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("wl-copy timed out"));
+    }, WL_CLIPBOARD_TIMEOUT_MS);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    // wl-copy forks a child that keeps serving the selection; the parent
+    // exits promptly once the offer is registered.
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`wl-copy exited ${code}`));
+    });
+    child.stdin.end(text);
+  });
+}
+
+function wlPaste(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn("wl-paste", ["--no-newline"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, WL_CLIPBOARD_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      out += chunk.toString("utf8");
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? out : null);
+    });
+  });
+}
+
+/**
+ * Put the transcript on the WAYLAND clipboard and wait until the compositor
+ * serves it back. Electron in the packaged AppImage runs via XWayland, and
+ * its X11 clipboard writes were not reliably bridged to the Wayland
+ * clipboard the target apps read — so every paste delivered stale clipboard
+ * content instead of the transcript. Writing through wl-copy talks to the
+ * compositor directly; the read-back verify closes any remaining
+ * propagation race before the paste chord is injected.
+ */
+async function setWaylandClipboardVerified(text: string): Promise<boolean> {
+  try {
+    await wlCopy(text);
+  } catch (err) {
+    log.warn(`wl-copy failed, falling back to Electron clipboard: ${err}`);
+    return false;
+  }
+  const deadline = Date.now() + WL_VERIFY_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if ((await wlPaste()) === text) return true;
+    await wait(20);
+  }
+  log.warn("wayland clipboard verify timed out; injecting anyway");
+  return true;
+}
+
+async function restoreWaylandClipboard(
+  prior: string | null,
+  transcript: string,
+): Promise<void> {
+  if (prior === null) return;
+  try {
+    if ((await wlPaste()) !== transcript) return;
+    await wlCopy(prior);
+  } catch {
+    // Best-effort: worst case the transcript stays on the clipboard.
+  }
+}
+
 async function doPasteIntoFocusedApp(
   text: string,
   beforePaste?: () => Promise<void> | void,
@@ -601,8 +687,17 @@ async function doPasteIntoFocusedApp(
 
   text = `${text} `;
 
+  const wayland = process.platform === "linux" && isWaylandSession();
   const prior = snapshotClipboard();
-  clipboard.writeText(text);
+  let waylandPrior: string | null = null;
+  if (wayland) {
+    waylandPrior = await wlPaste();
+    if (!(await setWaylandClipboardVerified(text))) {
+      clipboard.writeText(text);
+    }
+  } else {
+    clipboard.writeText(text);
+  }
 
   let pasted = false;
   try {
@@ -632,7 +727,11 @@ async function doPasteIntoFocusedApp(
     // When every paste backend failed, the clipboard is the only copy of the
     // transcript the user still has — leave it there instead of restoring.
     if (pasted) {
-      restoreClipboard(prior, text);
+      if (wayland) {
+        await restoreWaylandClipboard(waylandPrior, text);
+      } else {
+        restoreClipboard(prior, text);
+      }
     }
   }
 }
