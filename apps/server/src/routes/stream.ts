@@ -736,10 +736,18 @@ const stream = new Hono().get(
             // Ignore close from a superseded socket (replaced on a later "start").
             if (upstream !== session) return;
             upstream = null;
+            upstreamConfigKey = null;
+            captureUpstreamRecording = null;
+            const recordingCommitted = commitTime > 0;
             if (
               !closed &&
               !sessionTransportUnavailable &&
-              reconnectAttempts < MAX_RECONNECT_ATTEMPTS
+              reconnectAttempts < MAX_RECONNECT_ATTEMPTS &&
+              // A per-recording provider closes its upstream as the successful
+              // response to commit. Reconnect it on the next start, not while
+              // the completed transcript is being post-processed.
+              (!recordingCommitted ||
+                shouldKeepStreamingUpstreamAlive(voice.provider))
             ) {
               reconnectAttempts++;
               try {

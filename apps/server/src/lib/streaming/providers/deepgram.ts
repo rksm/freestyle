@@ -15,8 +15,7 @@ import { stripProviderPrefix } from "../types.js";
 
 const DEEPGRAM_LISTEN_URL = "wss://api.deepgram.com/v1/listen";
 const COMMIT_TIMEOUT_MS = 12_000;
-// Deepgram closes streaming sockets after ~10s without audio (NET-0001);
-// KeepAlive holds the connection open between recordings.
+// Deepgram closes streaming sockets after ~10s without audio (NET-0001).
 const KEEPALIVE_INTERVAL_MS = 5_000;
 
 export class DeepgramTranscriptionProvider implements TranscriptionProvider {
@@ -112,6 +111,11 @@ export class DeepgramTranscriptionProvider implements TranscriptionProvider {
         return;
       }
 
+      if (msg.type === "Metadata") {
+        if (commitRequested) deliverFinal();
+        return;
+      }
+
       if (msg.type !== "Results") return;
 
       const transcript = msg.channel?.alternatives?.[0]?.transcript ?? "";
@@ -121,14 +125,14 @@ export class DeepgramTranscriptionProvider implements TranscriptionProvider {
         accumulatedText = mergeFinalSegment(accumulatedText, transcript);
         partialText = "";
 
-        if (commitRequested) {
-          deliverFinal();
-        } else {
+        if (!commitRequested) {
           callbacks.onPartial(accumulatedText);
         }
       } else {
         partialText = transcript;
-        callbacks.onPartial(previewText(accumulatedText, partialText));
+        if (!commitRequested) {
+          callbacks.onPartial(previewText(accumulatedText, partialText));
+        }
       }
     });
 
@@ -157,20 +161,23 @@ export class DeepgramTranscriptionProvider implements TranscriptionProvider {
       commit(): void {
         commitRequested = true;
         clearCommitTimeout();
+        stopKeepAlive();
         if (ws.readyState !== WebSocket.OPEN) {
           deliverFinal();
           return;
         }
-        ws.send(JSON.stringify({ type: "Finalize" }));
+
+        // CloseStream gives each dictation a definitive completion message:
+        // Deepgram flushes all cached audio, sends every remaining Results
+        // message, then sends Metadata before closing the socket. Finalize is
+        // unsuitable here because Deepgram does not guarantee an acknowledgement
+        // when no significant audio remains buffered.
+        ws.send(JSON.stringify({ type: "CloseStream" }));
         commitTimeout = setTimeout(() => {
           deliverFinal();
         }, COMMIT_TIMEOUT_MS);
       },
       cancel(): void {
-        // Deepgram is kept warm across recordings, so a cancel must NOT send
-        // CloseStream — that closes the socket server-side and makes the route
-        // reconnect. Just drop the in-flight transcript and leave the socket
-        // open for the next recording. close() is used for real teardown.
         clearCommitTimeout();
         accumulatedText = "";
         partialText = "";
