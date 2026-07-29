@@ -27,6 +27,10 @@ Working end to end, verified live on this machine:
 - Fixed eval corpus measured the feature: exact technical spellings went
   from 3-13% (no context) to 70-73% (context to ASR + cleanup), zero
   context-induced insertions, zero cleanup corruption.
+- A checked-in Custom cleanup prompt template covers conservative Markdown
+  backticks for clear code identifiers, numbered or bulleted formatting for
+  dictated enumerations, and spoken-symbol reconstruction. It is an example
+  to copy into the Custom prompt setting, not an automatically active default.
 
 * Architecture (the essence of the deleted PLAN.org)
 
@@ -74,7 +78,10 @@ vocabulary into both the ASR bias and a cleanup context block.
   =transcription_debug_log= (off by default).
 - Privacy rules: snapshots are bounded, never persisted, never in
   analytics. Normal logs carry counts and durations only. The opt-in debug
-  log is the single deliberate exception.
+  log is the single deliberate exception. Its entry header now identifies
+  the target application for batch, streaming, and multi-segment dictations.
+  Only the parsed app name (or bundle ID fallback) reaches disk; window
+  titles, URLs, and the original app-context payload do not.
 - Alignment decisions that shaped this: upstreamable seam + plugin (not
   fork-local core integration), terminal context to ASR and cleanup with
   redaction, Emacs prioritized, cleanup on with gpt-5.6-luna.
@@ -97,6 +104,12 @@ Feature, in dependency order:
   =just transcriptions= pretty-printer
 - =35506ac= / =fc1fb20= / =784b357= / =db7610d= / =a87b539= fix(electron):
   the delivery chain (see issue log below)
+- =10daad4= feat(logs): include the target application in every
+  transcription debug-log path and in =just transcriptions= output, while
+  discarding titles, URLs, and the original app-context payload
+- =a4f33a8= docs: add =custom-prompt.example.md= for code-identifier
+  backticks, dictated Markdown lists, spoken symbols, and conservative
+  transcript cleanup
 - justfile: dev/test/release/install-appimage/sync recipes +
   =just transcriptions [-f]=
 
@@ -172,8 +185,10 @@ touching the respective areas.
    raises it at launch. The opt-in per-dictation JSONL
    (=transcription_debug_log= setting -> =~/.config/Freestyle/transcriptions.jsonl=,
    pretty-printed by =just transcriptions [-f]=) records raw, injected
-   context, cleaned text, and stage timings, and was the tool that cracked
-   most of the above.
+   context, cleaned text, stage timings, and the target app, and was the tool
+   that cracked most of the above. App logging deliberately reduces the
+   original context to the app name or bundle ID so private window titles and
+   URLs are not persisted.
 9. *appimage-run caches by content hash* (=~/.cache/appimage-run/<sha>/=).
    A rebuilt AppImage only takes effect after fully quitting and
    relaunching the app. Several "fix didn't work" moments were stale
@@ -201,6 +216,11 @@ touching the respective areas.
    server instance (own FREESTYLE_DB_PATH + fixture plugin +
    FREESTYLE_EVAL_SNAPSHOT_FILE exported to BOTH server and harness) to
    avoid contaminating the real app and its settings.
+8. Copy =custom-prompt.example.md= into the Custom cleanup setting and
+   evaluate it on live technical dictation. Check false positives for
+   ordinary words that are also plausible identifiers, Markdown backtick
+   placement, ordered versus unordered list selection, and interaction with
+   the automatically appended language and context blocks.
 
 * Suggested skills
 
@@ -225,7 +245,7 @@ touching the respective areas.
 - Collectors: =plugins/desktop-context/src/index.ts=,
   =integrations/gnome-focus-bridge/=, =integrations/emacs/freestyle-context.el=.
 - Ops: =justfile=, =scripts/eval-context/=, =scripts/format-transcription-log.mjs=,
-  =apps/server/src/lib/transcription-log.ts=.
+  =apps/server/src/lib/transcription-log.ts=, =custom-prompt.example.md=.
 - NixOS: =/etc/nixos/shared/linux/freestyle.nix= (launcher/desktop item),
   =shared/linux-home/freestyle.nix= (plugin), =shared/linux-home/gnome.nix=
   (extension), =shared/linux/packages.nix= (nix-ld libraries).
