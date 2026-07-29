@@ -65,11 +65,56 @@ const COMMON_WORDS = new Set([
 const SENSITIVE_ASSIGNMENT =
   /(\b[A-Za-z_][A-Za-z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|BEARER)[A-Za-z0-9_-]*\s*(?:=|:)\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi;
 const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/gi;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LONG_HEX = /^[0-9a-f]{24,}$/i;
+const OPAQUE_RUN = /[A-Za-z0-9+_=-]{20,}/g;
+const NIX_STORE_PATH = /\/nix\/store\/[a-z0-9]{20,}-/i;
+const LOW_SIGNAL_PATH =
+  /^\/(?:dev|etc|nix|proc|run|sys|tmp|var)$|^\/home\/[^/]+$/i;
+const TRANSIENT_MEASUREMENT = /^\d+(?:ms|s|m|h|%)$/i;
 
 function redactText(text: string): string {
   return text
     .replace(PEM_BLOCK, "")
     .replace(SENSITIVE_ASSIGNMENT, "$1[redacted]");
+}
+
+function shannonEntropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const char of value) {
+    counts.set(char, (counts.get(char) ?? 0) + 1);
+  }
+
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const probability = count / value.length;
+    entropy -= probability * Math.log2(probability);
+  }
+  return entropy;
+}
+
+function looksOpaque(value: string): boolean {
+  if (UUID.test(value) || LONG_HEX.test(value)) return true;
+
+  const candidate = value.replace(/[-_=]+$/g, "");
+  if (candidate.length < 20) return false;
+
+  const hasLower = /[a-z]/.test(candidate);
+  const hasUpper = /[A-Z]/.test(candidate);
+  const hasDigit = /\d/.test(candidate);
+  const hasEncodingPunctuation = /[+_=/]/.test(candidate);
+  const variedAlphabet =
+    [hasLower, hasUpper, hasDigit, hasEncodingPunctuation].filter(Boolean)
+      .length >= 2;
+
+  if (!variedAlphabet || shannonEntropy(candidate) < 4.2) return false;
+
+  return (
+    hasDigit ||
+    hasEncodingPunctuation ||
+    (candidate.length >= 32 && hasLower && hasUpper)
+  );
 }
 
 function looksLikeSecret(term: string): boolean {
@@ -82,13 +127,23 @@ function looksLikeSecret(term: string): boolean {
     return true;
   }
 
-  return (
+  if (
     term.length >= 32 &&
     /^[A-Za-z0-9]+$/.test(term) &&
     /[a-z]/.test(term) &&
     /[A-Z]/.test(term) &&
     /\d/.test(term)
-  );
+  ) {
+    return true;
+  }
+
+  if (NIX_STORE_PATH.test(term)) return true;
+
+  return [...term.matchAll(OPAQUE_RUN)].some((match) => looksOpaque(match[0]));
+}
+
+function looksLowSignal(term: string): boolean {
+  return LOW_SIGNAL_PATH.test(term) || TRANSIENT_MEASUREMENT.test(term);
 }
 
 function isIdentifierLike(
@@ -100,7 +155,8 @@ function isIdentifierLike(
     term.length < 3 ||
     /^\d+$/.test(term) ||
     COMMON_WORDS.has(term.toLowerCase()) ||
-    looksLikeSecret(term)
+    looksLikeSecret(term) ||
+    looksLowSignal(term)
   ) {
     return false;
   }
