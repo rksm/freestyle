@@ -193,7 +193,10 @@ function compileLinux() {
     const out = join(outputDir, "linux-fast-paste");
     const defines = ["-DHAVE_UINPUT"];
     let cflags = "";
-    let libs = "-lX11 -lXtst";
+    // -lXext -lXi: XTest's transitive deps. Linking them directly makes the
+    // Nix cc wrapper embed their rpaths, so the binary loads outside the dev
+    // shell (e.g. inside the packaged AppImage sandbox on NixOS).
+    let libs = "-lX11 -lXtst -lXext -lXi";
 
     if (hasGio) {
       defines.push("-DHAVE_GIO");
