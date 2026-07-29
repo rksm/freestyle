@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createAppLogger } from "@freestyle-voice/utils";
+import { queryFocusBridge } from "./focus-bridge.js";
 
 const log = createAppLogger("paste");
 
@@ -197,6 +198,23 @@ async function detectViaSway(): Promise<string | null> {
   return null;
 }
 
+/**
+ * GNOME Wayland: the FocusBridge extension is the only sanctioned focused-
+ * window source (Shell.Eval is disabled and Introspect is portal-only), so it
+ * must be tried before `detectViaGnomeShell`.
+ */
+async function detectViaFocusBridge(): Promise<string | null> {
+  const focused = await queryFocusBridge();
+  if (!focused) return null;
+  const className =
+    focused.wmClass ?? focused.wmClassInstance ?? focused.app ?? "";
+  if (matchesTerminal(className)) return className;
+  if (matchesIntegratedTerminal(className, focused.title)) {
+    return "integrated-terminal";
+  }
+  return className || null;
+}
+
 async function detectViaGnomeShell(): Promise<string | null> {
   const output = await execFileCapture("gdbus", [
     "call",
@@ -228,8 +246,12 @@ function orderedDetectors(): Array<() => Promise<string | null>> {
 
   if (process.env.HYPRLAND_INSTANCE_SIGNATURE) add(detectViaHyprland);
   if (process.env.SWAYSOCK) add(detectViaSway);
-  if (desktop.includes("gnome")) add(detectViaGnomeShell);
+  if (desktop.includes("gnome")) {
+    add(detectViaFocusBridge);
+    add(detectViaGnomeShell);
+  }
 
+  add(detectViaFocusBridge);
   add(detectViaXdotool);
   add(detectViaHyprland);
   add(detectViaSway);
