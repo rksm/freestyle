@@ -47,6 +47,113 @@ static int g_altDown = 0;
 static int g_shiftDown = 0;
 static int g_metaDown = 0;
 
+typedef struct {
+    const char *name;
+    int code;
+} KeyName;
+
+/*
+ * Linux evdev keycodes follow keyboard layout positions, not alphabetical or
+ * numeric order. Keep one explicit map for both accelerator parsing and
+ * recording so the two paths cannot disagree.
+ */
+static const KeyName g_keyNames[] = {
+    {"Space", KEY_SPACE},
+    {"Tab", KEY_TAB},
+    {"Escape", KEY_ESC},
+    {"Return", KEY_ENTER},
+    {"Backspace", KEY_BACKSPACE},
+    {"Delete", KEY_DELETE},
+    {"Up", KEY_UP},
+    {"Down", KEY_DOWN},
+    {"Left", KEY_LEFT},
+    {"Right", KEY_RIGHT},
+    {"Home", KEY_HOME},
+    {"End", KEY_END},
+    {"PageUp", KEY_PAGEUP},
+    {"PageDown", KEY_PAGEDOWN},
+    {"CapsLock", KEY_CAPSLOCK},
+    {"Pause", KEY_PAUSE},
+    {"Insert", KEY_INSERT},
+    {"MouseButton4", BTN_SIDE},
+    {"MouseButton5", BTN_EXTRA},
+    {"RightAlt", KEY_RIGHTALT},
+    {"RightControl", KEY_RIGHTCTRL},
+    {"RightShift", KEY_RIGHTSHIFT},
+    {"RightSuper", KEY_RIGHTMETA},
+    {"A", KEY_A},
+    {"B", KEY_B},
+    {"C", KEY_C},
+    {"D", KEY_D},
+    {"E", KEY_E},
+    {"F", KEY_F},
+    {"G", KEY_G},
+    {"H", KEY_H},
+    {"I", KEY_I},
+    {"J", KEY_J},
+    {"K", KEY_K},
+    {"L", KEY_L},
+    {"M", KEY_M},
+    {"N", KEY_N},
+    {"O", KEY_O},
+    {"P", KEY_P},
+    {"Q", KEY_Q},
+    {"R", KEY_R},
+    {"S", KEY_S},
+    {"T", KEY_T},
+    {"U", KEY_U},
+    {"V", KEY_V},
+    {"W", KEY_W},
+    {"X", KEY_X},
+    {"Y", KEY_Y},
+    {"Z", KEY_Z},
+    {"0", KEY_0},
+    {"1", KEY_1},
+    {"2", KEY_2},
+    {"3", KEY_3},
+    {"4", KEY_4},
+    {"5", KEY_5},
+    {"6", KEY_6},
+    {"7", KEY_7},
+    {"8", KEY_8},
+    {"9", KEY_9},
+    {"`", KEY_GRAVE},
+    {"-", KEY_MINUS},
+    {"=", KEY_EQUAL},
+    {"[", KEY_LEFTBRACE},
+    {"]", KEY_RIGHTBRACE},
+    {"\\", KEY_BACKSLASH},
+    {";", KEY_SEMICOLON},
+    {"'", KEY_APOSTROPHE},
+    {",", KEY_COMMA},
+    {".", KEY_DOT},
+    {"/", KEY_SLASH},
+    {"F1", KEY_F1},
+    {"F2", KEY_F2},
+    {"F3", KEY_F3},
+    {"F4", KEY_F4},
+    {"F5", KEY_F5},
+    {"F6", KEY_F6},
+    {"F7", KEY_F7},
+    {"F8", KEY_F8},
+    {"F9", KEY_F9},
+    {"F10", KEY_F10},
+    {"F11", KEY_F11},
+    {"F12", KEY_F12},
+    {"F13", KEY_F13},
+    {"F14", KEY_F14},
+    {"F15", KEY_F15},
+    {"F16", KEY_F16},
+    {"F17", KEY_F17},
+    {"F18", KEY_F18},
+    {"F19", KEY_F19},
+    {"F20", KEY_F20},
+    {"F21", KEY_F21},
+    {"F22", KEY_F22},
+    {"F23", KEY_F23},
+    {"F24", KEY_F24},
+};
+
 static int is_ctrl(int code) {
     return code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL;
 }
@@ -76,54 +183,22 @@ static int modifiers_satisfied(void) {
 }
 
 static int parse_key_name(const char *name) {
-    if (strcasecmp(name, "Space") == 0) return KEY_SPACE;
-    if (strcasecmp(name, "Tab") == 0) return KEY_TAB;
-    if (strcasecmp(name, "Escape") == 0 || strcasecmp(name, "Esc") == 0) return KEY_ESC;
-    if (strcasecmp(name, "Enter") == 0 || strcasecmp(name, "Return") == 0) return KEY_ENTER;
-    if (strcasecmp(name, "Backspace") == 0) return KEY_BACKSPACE;
-    if (strcasecmp(name, "Delete") == 0) return KEY_DELETE;
-    if (strcasecmp(name, "Up") == 0) return KEY_UP;
-    if (strcasecmp(name, "Down") == 0) return KEY_DOWN;
-    if (strcasecmp(name, "Left") == 0) return KEY_LEFT;
-    if (strcasecmp(name, "Right") == 0) return KEY_RIGHT;
-    if (strcasecmp(name, "Home") == 0) return KEY_HOME;
-    if (strcasecmp(name, "End") == 0) return KEY_END;
-    if (strcasecmp(name, "PageUp") == 0) return KEY_PAGEUP;
-    if (strcasecmp(name, "PageDown") == 0) return KEY_PAGEDOWN;
-    if (strcasecmp(name, "CapsLock") == 0) return KEY_CAPSLOCK;
-    if (strcasecmp(name, "Pause") == 0) return KEY_PAUSE;
-    if (strcasecmp(name, "Insert") == 0) return KEY_INSERT;
-    if (strcasecmp(name, "MouseButton4") == 0 || strcasecmp(name, "Mouse4") == 0) return BTN_SIDE;
-    if (strcasecmp(name, "MouseButton5") == 0 || strcasecmp(name, "Mouse5") == 0) return BTN_EXTRA;
+    const char *canonical = name;
 
-    /* Function keys */
-    if (name[0] == 'F' || name[0] == 'f') {
-        int n = atoi(name + 1);
-        if (n >= 1 && n <= 12) return KEY_F1 + (n - 1);
-        if (n >= 13 && n <= 24) return KEY_F13 + (n - 13);
-    }
+    if (strcasecmp(name, "Esc") == 0) canonical = "Escape";
+    else if (strcasecmp(name, "Enter") == 0) canonical = "Return";
+    else if (strcasecmp(name, "Mouse4") == 0) canonical = "MouseButton4";
+    else if (strcasecmp(name, "Mouse5") == 0) canonical = "MouseButton5";
+    else if (strcasecmp(name, "Backquote") == 0) canonical = "`";
+    else if (strcasecmp(name, "RightOption") == 0) canonical = "RightAlt";
+    else if (strcasecmp(name, "RightCtrl") == 0) canonical = "RightControl";
+    else if (strcasecmp(name, "RightWin") == 0 ||
+             strcasecmp(name, "RightMeta") == 0) canonical = "RightSuper";
 
-    /* Backtick */
-    if (strcmp(name, "`") == 0 || strcasecmp(name, "Backquote") == 0) return KEY_GRAVE;
-
-    /* Single letter/digit */
-    if (strlen(name) == 1) {
-        char c = name[0];
-        if (c >= 'a' && c <= 'z') return KEY_A + (c - 'a');
-        if (c >= 'A' && c <= 'Z') return KEY_A + (c - 'A');
-        if (c >= '0' && c <= '9') return KEY_0 + (c - '0');
-        /* Punctuation */
-        switch (c) {
-            case '-': return KEY_MINUS;
-            case '=': return KEY_EQUAL;
-            case '[': return KEY_LEFTBRACE;
-            case ']': return KEY_RIGHTBRACE;
-            case '\\': return KEY_BACKSLASH;
-            case ';': return KEY_SEMICOLON;
-            case '\'': return KEY_APOSTROPHE;
-            case ',': return KEY_COMMA;
-            case '.': return KEY_DOT;
-            case '/': return KEY_SLASH;
+    size_t keyCount = sizeof(g_keyNames) / sizeof(g_keyNames[0]);
+    for (size_t i = 0; i < keyCount; i++) {
+        if (strcasecmp(canonical, g_keyNames[i].name) == 0) {
+            return g_keyNames[i].code;
         }
     }
 
@@ -225,51 +300,13 @@ static void emit_record_modifiers(void) {
 }
 
 static const char *keycode_to_record_name(int code) {
-    if (code == KEY_SPACE) return "Space";
-    if (code == KEY_TAB) return "Tab";
-    if (code == KEY_ESC) return "Escape";
-    if (code == KEY_ENTER) return "Return";
-    if (code == KEY_BACKSPACE) return "Backspace";
-    if (code == KEY_DELETE) return "Delete";
-    if (code == KEY_UP) return "Up";
-    if (code == KEY_DOWN) return "Down";
-    if (code == KEY_LEFT) return "Left";
-    if (code == KEY_RIGHT) return "Right";
-    if (code == KEY_HOME) return "Home";
-    if (code == KEY_END) return "End";
-    if (code == KEY_PAGEUP) return "PageUp";
-    if (code == KEY_PAGEDOWN) return "PageDown";
-    if (code == KEY_CAPSLOCK) return "CapsLock";
-    if (code == KEY_PAUSE) return "Pause";
-    if (code == KEY_INSERT) return "Insert";
-    if (code == BTN_SIDE) return "MouseButton4";
-    if (code == BTN_EXTRA) return "MouseButton5";
-    if (code == KEY_RIGHTALT) return "RightAlt";
-    if (code == KEY_RIGHTCTRL) return "RightControl";
-    if (code == KEY_RIGHTSHIFT) return "RightShift";
-    if (code == KEY_RIGHTMETA) return "RightSuper";
-    if (code >= KEY_F1 && code <= KEY_F12) {
-        static char fkey[8];
-        snprintf(fkey, sizeof(fkey), "F%d", code - KEY_F1 + 1);
-        return fkey;
+    size_t keyCount = sizeof(g_keyNames) / sizeof(g_keyNames[0]);
+    for (size_t i = 0; i < keyCount; i++) {
+        if (code == g_keyNames[i].code) {
+            return g_keyNames[i].name;
+        }
     }
-    if (code >= KEY_F13 && code <= KEY_F24) {
-        static char fkey[8];
-        snprintf(fkey, sizeof(fkey), "F%d", code - KEY_F13 + 13);
-        return fkey;
-    }
-    if (code >= KEY_A && code <= KEY_Z) {
-        static char letter[2];
-        letter[0] = 'A' + (code - KEY_A);
-        letter[1] = '\0';
-        return letter;
-    }
-    if (code >= KEY_0 && code <= KEY_9) {
-        static char digit[2];
-        digit[0] = '0' + (code - KEY_0);
-        digit[1] = '\0';
-        return digit;
-    }
+
     return NULL;
 }
 
