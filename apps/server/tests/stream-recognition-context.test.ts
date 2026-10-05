@@ -34,7 +34,9 @@ vi.mock("@hono/node-server", () => ({
   },
 }));
 
-const openStreamingSession = vi.fn((_opts: { bias?: unknown }): FakeSession => {
+type SessionOpts = { bias?: unknown; callbacks: { onClose: () => void } };
+
+const openStreamingSession = vi.fn((_opts: SessionOpts): FakeSession => {
   return {
     sendAudio: vi.fn(),
     commit: vi.fn(),
@@ -53,11 +55,9 @@ vi.mock("../src/lib/streaming-stt.js", () => ({
   voiceProviderCategory: () => "byok",
 }));
 
+const voice = { provider: "deepgram", model_id: "deepgram/nova-3" };
 vi.mock("../src/lib/providers.js", () => ({
-  getDefaultModels: () => ({
-    voice: { provider: "deepgram", model_id: "deepgram/nova-3" },
-    llm: null,
-  }),
+  getDefaultModels: () => ({ voice: { ...voice }, llm: null }),
 }));
 
 const registry = { current: new PluginRegistry() };
@@ -100,6 +100,10 @@ describe("stream route recognition context", () => {
   beforeEach(() => {
     openStreamingSession.mockClear();
     registry.current = new PluginRegistry();
+    Object.assign(voice, {
+      provider: "deepgram",
+      model_id: "deepgram/nova-3",
+    });
   });
 
   it("biases the session with context and flushes audio buffered meanwhile", async () => {
@@ -174,5 +178,40 @@ describe("stream route recognition context", () => {
     await settle();
 
     expect(openStreamingSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("stream route per-recording upstream", () => {
+  beforeEach(() => {
+    openStreamingSession.mockClear();
+    registry.current = new PluginRegistry();
+    Object.assign(voice, {
+      provider: "assemblyai",
+      model_id: "assemblyai/universal-3-6-pro",
+    });
+  });
+
+  const upstreamCloses = () =>
+    openStreamingSession.mock.calls[0]?.[0].callbacks.onClose();
+
+  it("reconnects when the session drops before commit", async () => {
+    const { events, ws } = connect();
+    start(events, ws);
+    await settle();
+
+    upstreamCloses();
+    await settle();
+    expect(openStreamingSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reconnect when the session ends itself after commit", async () => {
+    const { events, ws } = connect();
+    start(events, ws);
+    await settle();
+    events.onMessage({ data: JSON.stringify({ type: "commit" }) }, ws);
+
+    upstreamCloses();
+    await settle();
+    expect(openStreamingSession).toHaveBeenCalledTimes(1);
   });
 });

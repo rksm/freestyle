@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { shouldKeepStreamingUpstreamAlive } from "../src/lib/streaming/session-policy.js";
 
 describe("shouldKeepStreamingUpstreamAlive", () => {
-  it("treats Soniox sessions as ephemeral", () => {
+  it("treats Soniox and AssemblyAI sessions as ephemeral", () => {
     expect(shouldKeepStreamingUpstreamAlive("soniox")).toBe(false);
+    expect(shouldKeepStreamingUpstreamAlive("assemblyai")).toBe(false);
   });
 
   it("keeps other streaming providers warm by default", () => {

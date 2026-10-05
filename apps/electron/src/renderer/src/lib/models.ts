@@ -89,6 +89,7 @@ export const CLOUD_VOICE_PROVIDERS = [
   "deepgram",
   "elevenlabs",
   "soniox",
+  "assemblyai",
 ];
 
 export const VOICE_PROVIDERS = [
@@ -116,6 +117,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   deepgram: "Deepgram",
   elevenlabs: "ElevenLabs",
   soniox: "Soniox",
+  assemblyai: "AssemblyAI",
   mistral: "Mistral",
   openrouter: "OpenRouter",
   vercel: "Vercel AI Gateway",
@@ -132,6 +134,7 @@ export const PROVIDER_KEY_URLS: Record<string, string> = {
   deepgram: "https://console.deepgram.com",
   elevenlabs: "https://elevenlabs.io/app/settings/api-keys",
   soniox: "https://console.soniox.com",
+  assemblyai: "https://www.assemblyai.com/dashboard/api-keys",
   anthropic: "https://console.anthropic.com/settings/keys",
   google: "https://aistudio.google.com/apikey",
   mistral: "https://console.mistral.ai/api-keys",
@@ -226,6 +229,24 @@ export const VOICE_META: Record<
     quality: 5,
     cost: 0.12,
     note: "Fast multilingual streaming",
+  },
+  "assemblyai/universal-3-6-pro": {
+    speed: 5,
+    quality: 5,
+    cost: 0.45,
+    note: "Flagship model, 32 languages with code-switching",
+  },
+  "assemblyai/universal-streaming-english": {
+    speed: 4,
+    quality: 3,
+    cost: 0.15,
+    note: "English only, low cost",
+  },
+  "assemblyai/universal-streaming-multilingual": {
+    speed: 4,
+    quality: 3,
+    cost: 0.15,
+    note: "English, Spanish, German, French, Portuguese, Italian",
   },
 };
 

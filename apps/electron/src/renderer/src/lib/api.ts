@@ -73,15 +73,21 @@ async function resolvedClientFetch(
   const original = new Request(input, init);
   const url = new URL(original.url);
   const target = `${getApiBase()}${url.pathname}${url.search}${url.hash}`;
-  // Transfer the request body at most once. In Electron's Chromium Fetch
-  // implementation, rebuilding the routed request a second time just to
-  // replace its headers can consume JSON request bodies before dispatch.
-  const routedRequest = new Request(target, original);
+  const headers = new Headers(original.headers);
   for (const [key, value] of Object.entries(bearerAuthHeaders(serverToken))) {
-    if (!routedRequest.headers.has(key)) routedRequest.headers.set(key, value);
+    if (!headers.has(key)) headers.set(key, value);
   }
+  // Send the body as bytes. A body carried over from another Request is a
+  // stream in Electron's Chromium, which refuses streamed uploads over
+  // HTTP/1.1 and fails every JSON POST/PUT with "Failed to fetch".
+  const body = original.body ? await original.arrayBuffer() : undefined;
 
-  return observedFetch(routedRequest);
+  return observedFetch(target, {
+    method: original.method,
+    headers,
+    body,
+    signal: original.signal,
+  });
 }
 
 /** Base URL of the locally-run server (used when no server URL is configured). */
