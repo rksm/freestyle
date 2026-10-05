@@ -1,0 +1,418 @@
+#+TITLE: Freestyle Fork: Context-Aware Dictation, Implementation Handoff
+#+DATE: [2026-10-05 Mon]
+#+FILETAGS: :freestyle:dictation:asr:context:linux:handoff:
+
+* Purpose
+
+Handoff and reference for the context-aware transcription work on this fork.
+The fork sits on upstream Freestyle 0.9.2 (=freestyle-voice/main=, commit
+=035efdc=). The commits above that point are the fork. The first version of
+this work sat on upstream 0.6.1. That history is still on the local =main=
+branch (range =bca0c8d..main=). The rebase was done on branch
+=rebase/upstream-0.9.2= and is described in the rebase section below.
+
+Target machine: NixOS, GNOME Shell 50.1 on Wayland, wezterm, Emacs pgtk with a
+running server.
+
+This file keeps its old name, =2026-07-19_improvements.org=, so existing links
+still work. =docs/PLAN.org= is gone. Its text is in Git history.
+
+* Current state
+
+The code is ported onto upstream 0.9.2. Most behavior below was verified live
+on the 0.6.1-based build. The rebased build has not had a full live check yet.
+Open items lists what is still to check.
+
+What the fork does:
+
+- Dictation via hotkey, then streaming Deepgram nova-3 with per-dictation
+  desktop context as keyterms, then gpt-5.6-luna cleanup with a context block,
+  then delivery into the focused app.
+- Delivery per target: Emacs through =emacsclient= insertion. Terminals get
+  Ctrl+Shift+V and everything else gets Ctrl+V. Both wait until the pill has
+  given up focus and write the clipboard with =wl-copy= with a =wl-paste=
+  read-back first.
+- The app runs as a local anonymous user. Sign-in is gone. Features that need
+  Freestyle Cloud are hidden. Their server code is still in the tree and unused.
+- No Sentry and no PostHog. Nothing reports to a remote service.
+- A fixed eval corpus measured the feature. Exact technical spellings went from
+  3-13% (no context) to 70-73% (context to ASR and cleanup), with no
+  context-induced insertions and no cleanup corruption.
+- A checked-in custom cleanup prompt (=custom-prompt.example.md=) covers
+  Markdown backticks for clear code identifiers, numbered or bulleted lists for
+  dictated enumerations, and spoken symbols. It is an example to copy into the
+  Custom prompt setting. It is not on by default.
+
+Measured on the 0.6.1-based build (not yet re-measured after the rebase): about
+1.1 s from commit to paste in steady state (context ~20 ms, stt ~175 ms, llm
+~930 ms).
+
+* Architecture
+
+One design idea:
+
+#+BEGIN_QUOTE
+A pre-recognition plugin hook produces one bounded ContextSnapshot per
+dictation. One core resolver turns that snapshot plus the persistent
+vocabulary into both the ASR bias and a cleanup context block.
+#+END_QUOTE
+
+Where each piece lives now:
+
+- Hook: =resolveRecognitionContext= in =packages/sdk/src/hooks.ts=. The
+  snapshot schema is =packages/validations/src/context-snapshot.ts=. The
+  schema re-validates and bounds whatever a plugin returns.
+- Dispatch: =resolveRecognitionContext()= in
+  =apps/server/src/lib/plugins/pipeline.ts=. It calls the hook with a hard
+  250 ms deadline and passes the snapshot to the resolver. The hook cannot
+  consume or abort the dictation. The batch route (=routes/transcribe.ts=),
+  the streaming start (=routes/stream.ts=) and the multi-segment merge
+  (=routes/post-process-route.ts=) all call it.
+- Latch per recording: =routes/stream.ts= resolves the context once in
+  =handleStart= and keeps it in =recordingContext=. The cleanup stage at commit
+  reads the same value, so ASR and cleanup always see one snapshot. A cancel,
+  a closed socket or a newer start supersedes a pending resolve.
+- Resolver: =apps/server/src/lib/recognition-context.ts=. It extracts
+  identifiers, ranks them by source, redacts secrets (key shapes, NAME=value,
+  PEM blocks) and drops opaque terms (UUIDs, hashes, Nix store paths). Merge
+  order is vocabulary, then plugin bias, then contextual terms. Order is
+  priority, and provider caps keep the first N. It returns terms and
+  =noteText= for ASR, and =cleanup= (spellings and excerpt) for the prompt.
+- Cleanup: =buildRewritePrompt= adds a delimited =<context>= block to the user
+  prompt only, so the system prompt stays cacheable. The block is marked as
+  untrusted data. The model must use a matching exact spelling and must never
+  insert a term the speaker did not say.
+- Provider caps: =apps/server/src/lib/vocabulary-bias.ts=. Deepgram keyterms
+  are capped at 50 terms and a budget of 400 units. See issue 1.
+- Collectors: =plugins/desktop-context= is a server-process plugin loaded as a
+  loose file. It reads:
+  - the focused window, from the FocusBridge GNOME extension
+    (=integrations/gnome-focus-bridge=, D-Bus name =com.freestyle.FocusBridge=,
+    with a VibeTyper-bridge fallback),
+  - wezterm pane text, with =wezterm cli get-text=,
+  - Emacs, by calling =freestyle-context-snapshot= through =emacsclient=
+    (=integrations/emacs/freestyle-context.el=; visible windows first, then
+    open buffers), and
+  - visible text from the active AT-SPI document (Firefox and similar), with a
+    Slack fallback that reads visible message list items. Slack needs the GTK
+    accessibility bridge and Chromium renderer accessibility. The accessibility
+    collector uses a direct D-Bus connection to stay inside the deadline.
+  Every collector has a timeout. A failure leaves the field out.
+- Streaming: the resolved bias is part of the session-reuse fingerprint, so a
+  recording with context terms usually opens a fresh Deepgram socket. Audio
+  that arrives while the provider connects goes into upstream's
+  =apps/server/src/lib/streaming/pending-audio.ts= (up to 1024 chunks). The
+  fork has no buffer of its own.
+- Target app before the pill: on GNOME Wayland the pill takes focus. In
+  =apps/electron/src/main/index.ts=, =sendHotkeyDown()= reads the frontmost app
+  first (bounded at 250 ms by =PRE_PILL_CONTEXT_TIMEOUT_MS=), then shows the
+  pill, and sends the app with =hotkey:down=. Hotkey down and up share one
+  queue (=enqueueHotkeyIpc=), so up never overtakes a down that is still
+  capturing.
+- Delivery: =apps/electron/src/main/paste.ts= waits until focus leaves the pill
+  (=waitForFocusToLeavePill=, at most 400 ms, polling FocusBridge), writes the
+  clipboard with =wl-copy=, checks it with =wl-paste=, then sends the chord.
+  =emacs-insert.ts= handles Emacs. =focus-bridge.ts= is the one place that asks
+  the extension. Escape aborts =pillOutputAbort= in main, so a delivery that
+  already started stops at its next checkpoint and the borrowed clipboard is
+  restored.
+- Settings (the strings "true" and "false", where absent means enabled):
+  =context_enabled=, =context_to_asr=, =context_to_cleanup= (read by
+  =apps/server/src/lib/context-settings.ts=, with toggles on the settings
+  page), =context_source_window=, =context_source_terminal=,
+  =context_source_editor=, =context_source_accessibility= (read by the
+  plugin) and =transcription_debug_log= (off by default).
+- Privacy rules: snapshots are bounded, never persisted and never sent
+  anywhere. Normal logs carry counts and durations only. The opt-in debug log
+  is the one deliberate exception. Its entries name the target application for
+  the batch, streaming and multi-segment paths. Only the parsed app name (or
+  bundle ID) reaches disk. Window titles, URLs and the original app-context
+  payload do not.
+- Decisions that shaped this: an upstreamable seam plus a plugin instead of
+  fork-local core code, terminal context to ASR and cleanup with redaction,
+  Emacs first, cleanup on with gpt-5.6-luna.
+- Deferred on purpose: OCR and mid-stream keyterm updates (Deepgram Flux).
+
+* What was implemented (fork commits on this branch)
+
+The commits are listed by feature, in dependency order. "Replaces" names the
+old commits on =main= that each one ports. Read the old commit with
+=git show <hash>=.
+
+** Build
+
+- =28202af= build(nix): flake dev shell and justfile. Replaces =e740986=,
+  =d07a8cb=, =6c3439b=, =b5c7139=, =b3c4db7=, =437cb13=, =4f4e9d4=, =44eb910=,
+  =2078e50=, =069310b= and the recipe parts of =b5cdc5f=. Recipes: =dev=,
+  =build=, =release=, =test=, =test-server=, =typecheck=, =lint=, =format=,
+  =install=, =sync-gnome-extension=, =sync-desktop-context-plugin=,
+  =eval-context= and =transcriptions=.
+
+** Context-aware dictation
+
+- =864343a= feat(sdk): resolveRecognitionContext hook and bounded
+  ContextSnapshot schema. Replaces =b7d51c6=.
+- =ecafab9= feat(server): context-aware recognition and cleanup pipeline.
+  Replaces =658ac21= and =0044832= (Slack excerpt). The route buffer from
+  =658ac21= is dropped in favor of upstream's pending-audio buffer.
+- =4ee0993= fix(server): cap Deepgram keyterms and filter opaque context
+  terms. Replaces =c09e8f3=, =ce3b851= and =aabea42=.
+- =a716357= perf(server): cut OpenAI cleanup latency and bound it with a
+  timeout. Replaces the OpenAI part of =658ac21=.
+- =0f8de68= perf(cleanup): keep the models.dev registry off the dictation path.
+  Replaces =7090213=.
+- =1f43519= feat(plugins): desktop-context plugin and GNOME/Emacs
+  integrations. Replaces =980f1e8=, the plugin part of =1934216=, =0044832=,
+  =c911dc3= and =db7610d=.
+- =6aadf0b= feat(context): turn on app capture when context settings are on.
+  Replaces the cleanup-app-context part of =ac7ba10=.
+- =7a88786= feat(electron): context toggles on the settings page. Replaces the
+  settings part of =ac7ba10=.
+- =912f5b9= chore(eval): context evaluation harness. Replaces =b5cdc5f=.
+
+** Delivery on GNOME Wayland
+
+- =4fb371d= feat(electron): FocusBridge probes for frontmost app and terminal
+  focus. Replaces the Electron part of =ac7ba10= and =35506ac=.
+- =a64f6c1= feat(electron): reliable transcript delivery on GNOME Wayland.
+  Replaces =fc1fb20=, =db7610d=, =784b357= and =a87b539=.
+- =06e074f= feat(electron): capture the target app before the pill, cancel
+  delivery on Escape. Replaces the Electron part of =1934216= and =409212f=.
+- =aaf1084= fix(electron): link Xext/Xi into linux-fast-paste for Nix rpath
+  coverage. Replaces =a4fff09=.
+- =07cfc4c= fix(electron): preserve Super in Linux hotkeys. Replaces =52a2515=.
+- =2ace45c= fix(linux): stop polling disconnected input devices. Replaces
+  =e15869a=.
+
+** Local-only app
+
+- =968d1f0= feat(electron): remove sign-in, run as a local anonymous user.
+  Replaces =d00aaac=.
+- =ad54848= chore(telemetry): remove Sentry, keep no-op capture functions.
+  Replaces =198150b=. Upstream had already dropped PostHog.
+
+** Diagnostics
+
+- =1f3ff10= feat(server): opt-in per-dictation transcription debug log.
+  Replaces =c325a9e=, =10daad4= and =3548c7c=.
+- =c727ddc= chore(utils): FREESTYLE_LOG_LEVEL override for packaged builds.
+  Replaces =4c0e0c7=.
+
+** Settings and docs
+
+- =cd1cb50= fix(electron): keep the settings cache current when pages save
+  settings. Replaces =eec5a8a=. One =putSetting= helper in
+  =apps/electron/src/renderer/src/lib/query.ts= now serves every page.
+- =e532777= docs: add custom cleanup prompt example. Replaces =a4f33a8=.
+- =81bc9b0= docs(deepgram): record the Finalize vs CloseStream decision.
+  Replaces =6860620= and =c64c996=, which are dropped.
+- The commit for this file refreshes the docs. It replaces =9631b11=,
+  =d630e87=, =0f1fbec= and the earlier PLAN edits (=8f64798=, =8902b61=).
+
+NixOS repo (=/etc/nixos=, commits prefixed "linux:"): FocusBridge extension
+vendored and enabled through dconf, desktop-context plugin installed as a
+home-manager loose file, app launcher and desktop item, Electron and Chromium
+runtime libraries for nix-ld, and the release toolchain in the freestyle flake.
+That repo is not part of the rebase. The AppImage stays mutable at
+=~/projects/ai/freestyle/Freestyle.AppImage=.
+
+Update loop after code changes: run =just install=. It also syncs the extension
+and plugin copies into =/etc/nixos=. Run =just switch= there only when those
+synced files changed.
+
+* Rebase onto upstream 0.9.2 (2026-10-05)
+
+The user made these decisions before the port. Each one has a reason.
+
+- *Sign-in is removed. =LoginGate= is a stub.* The app runs as one local user.
+  =useCloudAuth()= returns a constant user, and =LoginGate= renders its
+  children (=apps/electron/src/renderer/src/components/login-gate.tsx=). No
+  auth request runs at startup. The stub keeps the single place where routes
+  would be protected, and keeps unchanged upstream code compiling.
+- *Cloud-only features are hidden.* Remix, agent and chat, Brain, scheduled
+  tasks, notifications, billing, upgrade and profile are not shown. The server
+  code for them stays in the tree and is unused. The Remix components stay
+  unmounted in the tree, so later upstream merges conflict less.
+  =knip.jsonc= lists the files that became unreachable.
+- *Sentry is removed.* The packages and the initialization are gone. Upstream
+  had added Sentry after the fork point and had already dropped PostHog.
+  =apps/server/src/lib/sentry.ts= now holds no-op functions with the same
+  names, so call sites stay unchanged. The renderer and main still post to the
+  loopback =/api/telemetry= and =/api/client-error= routes. The first ends in a
+  no-op. The second writes to the local log. The fork must not send telemetry or error reports.
+- *Deepgram keeps upstream's =Finalize= and warm socket.* The fork's
+  =CloseStream= change (=6860620=) and its timing instrumentation (=c64c996=)
+  are dropped. The data did not show that either approach is better.
+  =docs/deepgram-stream-finalization.org= has the evidence and the steps to
+  switch back. The fork's keyterm caps stay.
+- *Audio buffering while a provider connects uses upstream's pending-audio.*
+  The fork's route buffer is dropped. One buffer for every provider is simpler.
+- *models.dev stays off the dictation path.* Upstream #551 made the cost lookup
+  cache-only. Three waits on the registry were left in place. =0f8de68= removes the
+  =isCleanupModelSupported()= await, serves stale cost data while it refreshes,
+  and prefetches the registry at server start.
+- *Context-aware dictation is ported in full.* It is the most important
+  feature of the fork.
+
+* Evaluation results (scripts/eval-context, 25-utterance corpus)
+
+Measured on the 0.6.1-based build. The harness was ported unchanged and not
+re-run after the rebase.
+
+| config             | raw term recall | exact spelling final | insertions |
+|--------------------+-----------------+----------------------+------------|
+| baseline           | 3.3%            | 3.3-13.3%            | 0%         |
+| context to ASR     | 40.0%           | 36.7-56.7%           | 0%         |
+| context ASR+clean  | 40.0%           | 70.0-73.3%           | 0%         |
+
+Both stages matter. Keyterms lift raw recall from 3% to 40%. The cleanup
+context block turns most of the rest into exact final spellings. Harness
+caveats: streaming =final= exposes no separable raw transcript, and the
+baseline and vocab configs share whatever static vocabulary exists.
+
+* Issues encountered (the why behind the fixes)
+
+Every one of these cost real debugging time. Keep them in mind when touching
+these areas.
+
+1. *Deepgram keyterm limit is 500 tokens, not terms.* Subword tokens mean an
+   identifier counts several times. Rich context (52 open Emacs buffers)
+   exceeded the old caps and failed the whole request with a 400, so every
+   dictation came back empty. Now Deepgram keyterms are capped at 50 terms and
+   a budget of 400 units, where a unit is one UTF-8 byte (a strict upper bound
+   on token pieces) plus one per term. Batch and streaming share the cap.
+   The code is in =vocabulary-bias.ts=.
+2. *GNOME 50 has no sanctioned focused-window API.* =Shell.Eval= is disabled
+   and =Introspect.GetWindows= is portal-only. Everything that needs the focused
+   window goes through the FocusBridge extension.
+   =apps/electron/src/main/focus-bridge.ts= is the one query home. Without it,
+   both app-context capture and terminal detection (wezterm needs
+   Ctrl+Shift+V) fail.
+3. *The pill steals keyboard focus on GNOME Wayland* despite
+   =focusable:false= and =showInactive()=, because xdg-shell has no
+   never-focus hint. A paste sent one tick after hiding the pill went nowhere,
+   intermittently. Delivery now hides the pill first, then waits (at most
+   400 ms) until FocusBridge reports a window that is not Freestyle.
+   Corollary: any focused-window query made while the pill is visible sees
+   Freestyle itself. That broke Emacs detection at first, and it is why the
+   target app is now read before the pill shows (=sendHotkeyDown()=).
+4. *XWayland clipboard writes do not reach the Wayland clipboard.* The
+   packaged Electron app runs through XWayland inside the appimage-run
+   sandbox. =clipboard.writeText= landed on the X11 selection, and the target
+   pasted stale Wayland content ("right chord, wrong payload"). The fix is a
+   =wl-copy= write and a =wl-paste= read-back before the chord. Electron's
+   clipboard is the fallback when =wl-copy= fails.
+5. *Emacs binds no paste to Ctrl+V.* Delivery is programmatic:
+   =freestyle-insert-file= (in =integrations/emacs/freestyle-context.el=) reads
+   the transcript from a 0600 temp file and inserts at point. It refuses
+   read-only buffers, and delivery then falls back to paste. The user's own
+   =~/.emacs.d/lisp/init-audio.el= loads it. Do not wire it into =/etc/nixos=.
+   The user rejected that.
+6. *NixOS toolchain gaps* broke builds at runtime, not at compile time. The
+   whisper.cpp source build needed cmake and gnumake (the onboarding "Download
+   model" failure). electron-builder's downloaded fpm cannot run on NixOS
+   (use =USE_SYSTEM_FPM= and =pkgs.fpm=). The native paste helper needs
+   explicit =-lXext -lXi= so the Nix cc wrapper embeds their rpaths. The npm
+   Electron download needs the Chromium runtime set in
+   =programs.nix-ld.libraries= for =just dev=.
+7. *Tone page saves appeared to revert.* A save reached the server but never
+   updated the renderer's shared settings query cache (stale time one hour),
+   so a remount showed the old values. Pattern: call =putSetting= (in
+   =lib/query.ts=) for every settings save. It writes to the server and patches
+   the cache.
+8. *Debug visibility.* Packaged builds log at info. Set
+   =FREESTYLE_LOG_LEVEL=debug= at launch to raise the level. The opt-in
+   per-dictation JSONL (the =transcription_debug_log= setting, file
+   =transcriptions.jsonl= next to the database, pretty-printed by =just
+   transcriptions [-f]=) records the raw text, the injected context, the
+   cleaned text, stage timings and the target app. It cracked most of the
+   issues above. App logging reduces the original context to the app name or
+   bundle ID, so private window titles and URLs are not stored.
+9. *appimage-run caches by content hash* (=~/.cache/appimage-run/<sha>/=). A
+   rebuilt AppImage only takes effect after you quit and relaunch the app. Some
+   "fix didn't work" moments were stale instances.
+10. *The rebase left sign-in call sites in place.* The pill still calls
+    =cloud:prompt-sign-in= and =cloud:prompt-upgrade= when a stale cloud
+    default returns 401 or 429. Both now return false in main. Do not remove
+    the calls without checking the pill.
+
+* Open items
+
+1. *Live checks on GNOME Wayland.* The rebased build has not had these:
+   - Dictation end to end: the pill no longer swallows the paste, Emacs
+     insertion works, wezterm gets Ctrl+Shift+V, and =wl-paste --type text=
+     returns the transcript.
+   - Context terms reach Deepgram and the cleanup prompt. Dictate into
+     wezterm or Emacs with code on screen, and check that =just transcriptions
+     -f= shows terms and spellings.
+   - Escape during a paste stops the delivery and restores the clipboard.
+   - The 250 ms pre-pill capture works on a real session.
+   - =FREESTYLE_LOG_LEVEL= takes effect in a packaged build.
+2. The server still fetches cleanup prompts from Freestyle Cloud at startup
+   (=GET /v2/config=, no authentication). The code is
+   =refreshCleanupPromptConfig= in =apps/server/src/lib/editor/prompt-config.ts=,
+   called from =apps/server/src/index.ts=. Decide whether to disable it.
+3. Fresh installs have no default voice model. Upstream's onboarding no longer
+   has the model step, and the fork's =/onboarding= route redirects to Today.
+4. The pill's cancel button stops the renderer session but not a delivery that
+   is already running in main. Only Escape aborts that.
+5. The pill now waits up to 250 ms to capture the target app on every
+   platform, not only GNOME Wayland.
+6. Upstream's Remix copy-selection path is not Wayland-ready. Remix is hidden
+   for now, so this only matters if Remix comes back.
+7. LLM latency is about 930 ms warm on the old build and dominates the commit
+   to paste time. The hoped budget was 300-700 ms. Levers: confirm that
+   reasoning suppression works, use a shorter custom prompt, and try
+   gpt-4.1-nano as a fallback. Measure again on the rebased build.
+8. One =stt=12004ms= outlier was seen on the old build: a Deepgram commit
+   timeout on a warm socket. The rebase kept upstream's =Finalize=, which has
+   the same exposure. See =docs/deepgram-stream-finalization.org=. Watch for
+   it.
+9. Evaluate the AT-SPI document collector in more browsers and Electron apps.
+   Add app-specific fallbacks only where the accessibility tree has no
+   document viewport.
+10. Eval reruns: see =scripts/eval-context/README.md=. Use a scratch server
+    instance (its own =FREESTYLE_DB_PATH=, the fixture plugin, and
+    =FREESTYLE_EVAL_SNAPSHOT_FILE= exported to both server and harness) so the
+    real app and its settings stay clean.
+11. Copy =custom-prompt.example.md= into the Custom cleanup setting and
+    evaluate it on live technical dictation. Check false positives for ordinary
+    words that could be identifiers, backtick placement, ordered versus
+    unordered list choice, and the interaction with the language and context
+    blocks that are added automatically.
+12. Optional: send the core seam (SDK hook, resolver, route dispatch) upstream
+    as a PR against =freestyle-voice/freestyle=.
+
+* Suggested skills
+
+- =org-mode= when editing this or other Org docs.
+- =use-nix= when a command is missing from the dev shell.
+- =technical-writing= for any prose in docs and commit messages.
+
+* Key files
+
+- Core: =packages/sdk/src/hooks.ts= (hook contract),
+  =packages/validations/src/context-snapshot.ts= (bounding schema),
+  =apps/server/src/lib/recognition-context.ts= (resolver),
+  =apps/server/src/lib/plugins/pipeline.ts= (bounded dispatch),
+  =apps/server/src/lib/context-settings.ts= (the three context switches),
+  =apps/server/src/lib/vocabulary-bias.ts= (provider caps),
+  =apps/server/src/routes/stream.ts= (context latched per recording),
+  =apps/server/src/lib/streaming/pending-audio.ts= (upstream's audio buffer).
+- Delivery: =apps/electron/src/main/paste.ts= (focus wait, wl-copy, chord),
+  =apps/electron/src/main/emacs-insert.ts=,
+  =apps/electron/src/main/focus-bridge.ts=,
+  =apps/electron/src/main/linux-terminal-focus.ts=,
+  =apps/electron/src/main/index.ts= (=sendHotkeyDown=, =pillOutputAbort=).
+- Collectors: =plugins/desktop-context/src/index.ts=,
+  =integrations/gnome-focus-bridge/=, =integrations/emacs/freestyle-context.el=.
+- Local-only app: =apps/electron/src/renderer/src/components/login-gate.tsx=,
+  =apps/electron/src/renderer/src/lib/auth-context.tsx=,
+  =apps/server/src/lib/sentry.ts= (no-op stubs).
+- Ops: =justfile=, =scripts/eval-context/=,
+  =scripts/format-transcription-log.mjs=,
+  =apps/server/src/lib/transcription-log.ts=, =custom-prompt.example.md=,
+  =docs/deepgram-stream-finalization.org=.
+- NixOS: =/etc/nixos/shared/linux/freestyle.nix= (launcher and desktop item),
+  =shared/linux-home/freestyle.nix= (plugin), =shared/linux-home/gnome.nix=
+  (extension), =shared/linux/packages.nix= (nix-ld libraries).
