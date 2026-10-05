@@ -41,6 +41,7 @@ import {
   SYNCED_SETTING_KEYS,
 } from "../lib/preferences-sync.js";
 import { capture, invalidateTelemetrySetting } from "../lib/sentry.js";
+import { TRANSCRIPTION_DEBUG_LOG_SETTING } from "../lib/transcription-log.js";
 
 function normalizeOpenaiBaseUrl(input: string): string {
   return input.replace(/\/+$/, "").replace(/\/v1(?:\/[^?#]*)?$/, "");
@@ -127,7 +128,8 @@ const settings = new Hono()
       key === CONTEXT_TO_CLEANUP_SETTING ||
       key === CONTEXT_SOURCE_WINDOW_SETTING ||
       key === CONTEXT_SOURCE_TERMINAL_SETTING ||
-      key === CONTEXT_SOURCE_EDITOR_SETTING
+      key === CONTEXT_SOURCE_EDITOR_SETTING ||
+      key === TRANSCRIPTION_DEBUG_LOG_SETTING
     ) {
       const parsed = booleanSettingSchema.safeParse(body.value);
       if (!parsed.success) {

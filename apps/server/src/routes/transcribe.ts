@@ -44,6 +44,7 @@ import {
   getApiKeyForProvider,
   voiceProviderCategory,
 } from "../lib/streaming-stt.js";
+import { logTranscriptionDebug } from "../lib/transcription-log.js";
 import { buildAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 import { prewarmModelCostRegistry } from "./models.js";
 
@@ -121,6 +122,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   let rawText: string;
+  let sttMs: number | undefined;
   let transcribeDurationInSeconds: number | undefined;
   const languages = getLanguagesSetting();
   const api = await createHookApi();
@@ -196,6 +198,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   // One snapshot per dictation feeds both the ASR bias and the cleanup prompt.
+  const contextStart = Date.now();
   const recognitionContext = await resolveRecognitionContext({
     providerId: voiceProvider,
     modelId: voiceModel,
@@ -203,6 +206,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     pluginTerms: beforeTranscribeOutput.bias,
     ...(rawParsedCtx ? { appContext: rawParsedCtx } : {}),
   });
+  const contextMs = Date.now() - contextStart;
 
   const skipPostProcess = c.req.header("x-skip-post-process") === "true";
   const freestyleCleanupActive =
@@ -428,6 +432,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
         bias,
         appContext,
       });
+      sttMs = Date.now() - t0;
       rawText = sanitizeTranscriptText(result.text);
 
       // Plugin hook: rewrite the raw transcript before cleanup.
@@ -540,6 +545,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
       languages: effectiveLanguages,
       source: "batch",
       recognitionContext: recognitionContext.cleanup,
+      includeTimings: true,
       api,
     });
   } catch (err) {
@@ -580,6 +586,22 @@ const transcribeRoute = new Hono().post("/", async (c) => {
   }
 
   log.debug(`total ${totalDurationMs}ms`);
+
+  logTranscriptionDebug({
+    source: "batch",
+    raw: rawText,
+    cleaned: pp.cleaned,
+    appContext: rawAppContext,
+    context: recognitionContext,
+    timings: {
+      contextMs,
+      ...(sttMs !== undefined ? { sttMs } : {}),
+      ...pp.timings,
+      totalMs: totalDurationMs,
+    },
+    voiceModel,
+    llmModel: pp.llmModel,
+  });
 
   capture("transcription completed", {
     provider: voiceProvider,

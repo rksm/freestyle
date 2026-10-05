@@ -45,6 +45,7 @@ import {
   supportsStreaming,
   voiceProviderCategory,
 } from "../lib/streaming-stt.js";
+import { logTranscriptionDebug } from "../lib/transcription-log.js";
 import { resolveAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 
 const log = createAppLogger("stream");
@@ -416,6 +417,7 @@ const stream = new Hono().get(
             if (upstream !== session) return;
             // Latch now: a quick next `start` replaces these while cleanup runs.
             const finalContext = recordingContext;
+            const finalAppContext = appContext;
             const contextMs = recordingContextMs;
             rawText = sanitizeTranscriptText(rawText);
             const upstreamRaw = upstreamRawText
@@ -614,7 +616,7 @@ const stream = new Hono().get(
                 : canStream
                   ? "streaming"
                   : "batch",
-              ...(useFastHandoff ? { includeTimings: true } : {}),
+              includeTimings: true,
               recognitionContext: finalContext?.cleanup,
               api,
             });
@@ -629,7 +631,9 @@ const stream = new Hono().get(
                 const totalDurationMs =
                   commitTime > 0 ? Date.now() - commitTime : durationMs;
                 if (LOG_PIPELINE_LATENCY) {
-                  const handoffTimings = pp.timings;
+                  const handoffTimings = useFastHandoff
+                    ? pp.timings
+                    : undefined;
                   if (handoffTimings) {
                     const { handoffMs, llmMs } = handoffTimings;
                     const e2eMs = sttAfterCommitMs + handoffMs + llmMs;
@@ -667,6 +671,21 @@ const stream = new Hono().get(
                     has_app_context: !!ppCtx,
                   });
                 }
+                logTranscriptionDebug({
+                  source: "streaming",
+                  raw: rawText,
+                  cleaned: pp.cleaned,
+                  appContext: finalAppContext,
+                  context: finalContext,
+                  timings: {
+                    contextMs,
+                    sttMs: sttAfterCommitMs,
+                    ...pp.timings,
+                    totalMs: totalDurationMs,
+                  },
+                  voiceModel: voiceDefaults!.model_id,
+                  llmModel: pp.llmModel,
+                });
                 const deliverText = suppressed ? "" : pp.cleaned;
                 if (!closed) {
                   ws.send(JSON.stringify({ type: "final", text: deliverText }));
