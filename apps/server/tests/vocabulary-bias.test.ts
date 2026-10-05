@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { buildAsrVocabularyBias } from "../src/lib/vocabulary-bias.js";
 
@@ -85,30 +86,101 @@ describe("buildAsrVocabularyBias", () => {
       });
     });
 
-    it("caps nova-3 streaming keyterms at 25", () => {
+    it("keeps short nova-3 streaming keyterm lists unchanged", () => {
       const bias = buildAsrVocabularyBias(
         "deepgram",
         "nova-3-general",
-        terms(40),
+        ["first", "second", "third"],
         true,
       );
-      expect(bias?.kind).toBe("deepgram-keyterms");
-      if (bias?.kind === "deepgram-keyterms") {
-        expect(bias.terms).toHaveLength(25);
-      }
+      expect(bias).toEqual({
+        kind: "deepgram-keyterms",
+        terms: ["first", "second", "third"],
+      });
     });
 
-    it("caps nova-3 batch keyterms at 100", () => {
+    it.each([
+      true,
+      false,
+    ])("caps nova-3 keyterms at 50 (streaming=%s)", (streaming) => {
       const bias = buildAsrVocabularyBias(
         "deepgram",
         "nova-3",
-        terms(150),
-        false,
+        terms(90),
+        streaming,
       );
       expect(bias?.kind).toBe("deepgram-keyterms");
       if (bias?.kind === "deepgram-keyterms") {
-        expect(bias.terms).toHaveLength(100);
+        expect(bias.terms).toHaveLength(50);
       }
+    });
+
+    it.each([
+      true,
+      false,
+    ])("caps keyterms with a conservative byte budget (streaming=%s)", (streaming) => {
+      const input = Array.from(
+        { length: 100 },
+        (_, index) => `${index}-${"x".repeat(100)}`,
+      );
+      const cost = (term: string): number =>
+        Buffer.byteLength(term, "utf8") + 1;
+
+      const bias = buildAsrVocabularyBias(
+        "deepgram",
+        "nova-3-general",
+        input,
+        streaming,
+      );
+      expect(bias?.kind).toBe("deepgram-keyterms");
+      if (bias?.kind !== "deepgram-keyterms") return;
+
+      expect(bias.terms.length).toBeLessThan(50);
+      expect(bias.terms).toEqual(input.slice(0, bias.terms.length));
+
+      const used = bias.terms.reduce((sum, term) => sum + cost(term), 0);
+      const next = input[bias.terms.length]!;
+      expect(used).toBeLessThanOrEqual(400);
+      expect(used + cost(next)).toBeGreaterThan(400);
+    });
+
+    it("counts multibyte terms by UTF-8 bytes", () => {
+      const input = Array.from(
+        { length: 50 },
+        (_, index) => `用語${index}${"界".repeat(20)}`,
+      );
+      const bias = buildAsrVocabularyBias("deepgram", "nova-3", input, true);
+
+      expect(bias?.kind).toBe("deepgram-keyterms");
+      if (bias?.kind !== "deepgram-keyterms") return;
+
+      const used = bias.terms.reduce(
+        (sum, term) => sum + Buffer.byteLength(term, "utf8") + 1,
+        0,
+      );
+      expect(used).toBeLessThanOrEqual(400);
+      expect(bias.terms.length).toBeLessThan(input.length);
+    });
+
+    it("applies the byte budget to nova-2 streaming keywords only", () => {
+      const input = Array.from(
+        { length: 30 },
+        (_, i) => `${i}${"w".repeat(30)}`,
+      );
+      const streaming = buildAsrVocabularyBias(
+        "deepgram",
+        "nova-2",
+        input,
+        true,
+      );
+      const batch = buildAsrVocabularyBias("deepgram", "nova-2", input, false);
+
+      expect(streaming?.kind).toBe("deepgram-keywords");
+      expect(batch?.kind).toBe("deepgram-keywords");
+      if (streaming?.kind !== "deepgram-keywords") return;
+      if (batch?.kind !== "deepgram-keywords") return;
+      expect(batch.terms).toHaveLength(30);
+      expect(streaming.terms.length).toBeLessThan(30);
     });
 
     it("expands nova-2 phrases into keyword tokens", () => {

@@ -58,6 +58,52 @@ describe("buildRecognitionContext", () => {
 
       expect(context.terms).toEqual([]);
     });
+
+    it("filters opaque secrets and generated identifiers", () => {
+      const context = buildRecognitionContext({
+        snapshot: terminalSnapshot(
+          [
+            "resolveRecognitionContextSnapshot",
+            "OAuth2AuthorizationRequest",
+            "2026-07-29_review_pr-5250.org",
+            "019fad67-9c8a-70e1-876b-9429c805cf89",
+            "0123456789abcdef0123456789abcdef01234567",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            "/nix/store/zp6rsi809fx5h7dccn7aidg1mj8zgn52-bubblewrap/bin/bwrap",
+            "x7p9q2m4n8v6c3b5z1k0r2t4",
+          ].join(" "),
+        ),
+      });
+
+      expect(context.terms).toEqual([
+        "resolveRecognitionContextSnapshot",
+        "OAuth2AuthorizationRequest",
+        "2026-07-29_review_pr-5250.org",
+      ]);
+    });
+
+    it("filters transient environment noise", () => {
+      const context = buildRecognitionContext({
+        snapshot: terminalSnapshot(
+          "/dev /etc /nix /proc /run /sys /tmp /var /home/robert 21s 12000ms usefulTerm",
+        ),
+      });
+
+      expect(context.terms).toEqual(["usefulTerm"]);
+    });
+
+    it("keeps specific filesystem paths", () => {
+      const context = buildRecognitionContext({
+        snapshot: terminalSnapshot(
+          "/etc/nixos /home/robert/projects/freestyle",
+        ),
+      });
+
+      expect(context.terms).toEqual([
+        "/etc/nixos",
+        "/home/robert/projects/freestyle",
+      ]);
+    });
   });
 
   describe("ranking", () => {

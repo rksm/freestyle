@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { RecognitionContext } from "./recognition-context.js";
 import { stripProviderPrefix } from "./streaming/types.js";
 import {
@@ -14,9 +15,16 @@ export type AsrVocabularyBias =
   | { kind: "soniox-context"; terms: string[]; text?: string };
 
 const PROMPT_CHAR_BUDGET = 900;
-const DEEPGRAM_KEYTERM_MAX = 100;
-/** Keep streaming URLs short — long keyterm lists break the WS handshake. */
-const DEEPGRAM_STREAMING_KEYTERM_MAX = 25;
+const DEEPGRAM_KEYTERM_MAX = 50;
+/**
+ * Deepgram enforces "maximum number of tokens across all keyterms is 500"
+ * and recommends focusing on 20-50 terms. Its tokenizer is not public, so use
+ * UTF-8 bytes as a strict upper bound for token pieces, plus one boundary unit
+ * per term. Keep headroom below 500 because exceeding it rejects the request.
+ * This also keeps a streaming URL (which carries the keyterms) short: long
+ * keyterm lists break the WS handshake.
+ */
+const DEEPGRAM_KEYTERM_BUDGET = 400;
 const SONIOX_TERM_MAX = 500;
 const SONIOX_TERMS_CHAR_BUDGET = 6000;
 const ELEVENLABS_BATCH_KEYTERM_MAX = 100;
@@ -69,6 +77,18 @@ function expandNova2Keywords(terms: string[]): string[] {
       out.push(w);
       if (out.length >= DEEPGRAM_KEYTERM_MAX) return out;
     }
+  }
+  return out;
+}
+
+function capDeepgramKeyterms(terms: string[]): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const term of capTerms(terms, DEEPGRAM_KEYTERM_MAX)) {
+    const cost = Buffer.byteLength(term, "utf8") + 1;
+    if (used + cost > DEEPGRAM_KEYTERM_BUDGET) break;
+    out.push(term);
+    used += cost;
   }
   return out;
 }
@@ -132,19 +152,14 @@ export function buildAsrVocabularyBias(
     }
     case "deepgram": {
       if (isNova3Model(short)) {
-        const max = streaming
-          ? DEEPGRAM_STREAMING_KEYTERM_MAX
-          : DEEPGRAM_KEYTERM_MAX;
-        const keyterms = capTerms(capped, max);
+        const keyterms = capDeepgramKeyterms(capped);
         return keyterms.length > 0
           ? { kind: "deepgram-keyterms", terms: keyterms }
           : null;
       }
       if (isNova2Model(short)) {
-        const max = streaming
-          ? DEEPGRAM_STREAMING_KEYTERM_MAX
-          : DEEPGRAM_KEYTERM_MAX;
-        const keywords = expandNova2Keywords(capTerms(capped, max));
+        const expanded = expandNova2Keywords(capped);
+        const keywords = streaming ? capDeepgramKeyterms(expanded) : expanded;
         return keywords.length > 0
           ? { kind: "deepgram-keywords", terms: keywords }
           : null;
