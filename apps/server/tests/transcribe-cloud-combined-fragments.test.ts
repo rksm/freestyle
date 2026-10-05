@@ -119,6 +119,7 @@ describe("POST /api/transcribe — combined cloud + beforeCleanup", () => {
     writeSetting("llm_cleanup", "true");
     const db = getDb();
     db.exec("DELETE FROM transcription_history");
+    db.exec("DELETE FROM vocabulary");
     db.prepare("DELETE FROM settings WHERE key = ?").run(
       SETTINGS_KEYS.historyPaused,
     );
@@ -150,6 +151,28 @@ describe("POST /api/transcribe — combined cloud + beforeCleanup", () => {
     expect(opts.vocabulary).toBeUndefined();
     // Combined mode does its cleanup remotely — never touches local postProcess.
     expect(postProcessSpy).not.toHaveBeenCalled();
+  });
+
+  it("merges beforeTranscribe bias after persistent vocabulary", async () => {
+    getDb()
+      .prepare("INSERT INTO vocabulary (term, notes) VALUES (?, ?)")
+      .run("PersistentTerm", "saved vocabulary");
+    registry.current = new PluginRegistry([
+      {
+        name: "bias",
+        beforeTranscribe: (_input, output) => {
+          output.bias = ["PluginTerm"];
+        },
+      },
+    ]);
+
+    const res = await transcribe();
+
+    expect(res.status).toBe(200);
+    expect(lastCallOpts().vocabulary).toEqual({
+      terms: ["PersistentTerm", "PluginTerm"],
+      text: "PersistentTerm: saved vocabulary",
+    });
   });
 
   it("drops to raw mode (no cloud cleanup) when beforeCleanup sets skip", async () => {

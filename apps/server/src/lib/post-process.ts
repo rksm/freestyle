@@ -42,6 +42,7 @@ import {
 } from "./plugins/index.js";
 import { createHookApi } from "./plugins/pipeline.js";
 import { createCleanupModel, getDefaultModels } from "./providers.js";
+import type { RecognitionContext } from "./recognition-context.js";
 import { capture, captureException } from "./sentry.js";
 import { getSessionToken } from "./sessions.js";
 
@@ -73,6 +74,7 @@ export type PostProcessSource =
 export interface PostProcessOptions {
   source?: PostProcessSource;
   languages?: string[];
+  recognitionContext?: RecognitionContext["cleanup"];
   /** Return handoff/llm timing breakdown for pipeline logs. */
   includeTimings?: boolean;
   /**
@@ -346,6 +348,7 @@ export async function postProcess(
           workTone,
           emailTone,
           overallTone,
+          context: options.recognitionContext,
         });
         const pluginSystem =
           promptHook.system.length > 0

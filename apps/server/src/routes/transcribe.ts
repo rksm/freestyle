@@ -25,6 +25,7 @@ import {
   createHookApi,
   dispositionFromControl,
   emitAbortEvent,
+  resolveRecognitionContext,
 } from "../lib/plugins/pipeline.js";
 import {
   applyFinalRewrites,
@@ -42,10 +43,7 @@ import {
   getApiKeyForProvider,
   voiceProviderCategory,
 } from "../lib/streaming-stt.js";
-import {
-  buildAsrVocabularyBias,
-  resolveAsrVocabularyBias,
-} from "../lib/vocabulary-bias.js";
+import { buildAsrVocabularyBias } from "../lib/vocabulary-bias.js";
 import { prewarmModelCostRegistry } from "./models.js";
 
 const log = createAppLogger("transcribe");
@@ -91,11 +89,12 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     )} contentType=${contentType.slice(0, 40)}`,
   );
 
-  const appContext = resolveAppContextForCleanup(
-    decodeAppContext(c.req.header("x-app-context")),
-  );
+  const rawAppContext = decodeAppContext(c.req.header("x-app-context"));
+  const appContext = resolveAppContextForCleanup(rawAppContext);
   // Parse app name and resolve tone-routing destination once for analytics.
   const parsedCtx = parseAppContext(appContext);
+  // Context collectors need the app even when tone routing doesn't.
+  const rawParsedCtx = parseAppContext(rawAppContext);
   const { destination: routedDestination } = getRewritePromptContext(
     appContext,
     getCleanupAppAssignments(),
@@ -195,6 +194,15 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     );
   }
 
+  // One snapshot per dictation feeds both the ASR bias and the cleanup prompt.
+  const recognitionContext = await resolveRecognitionContext({
+    providerId: voiceProvider,
+    modelId: voiceModel,
+    streaming: false,
+    pluginTerms: beforeTranscribeOutput.bias,
+    ...(rawParsedCtx ? { appContext: rawParsedCtx } : {}),
+  });
+
   const skipPostProcess = c.req.header("x-skip-post-process") === "true";
   const freestyleCleanupActive =
     !skipPostProcess &&
@@ -261,16 +269,22 @@ const transcribeRoute = new Hono().post("/", async (c) => {
       // Languages are sent for every Cloud request so the live local selection
       // wins even before the asynchronous preference sync reaches Cloud.
       const languagesForCloud = effectiveLanguages;
-      const vocabularyOverride = beforeTranscribeOutput.bias
-        ? { terms: beforeTranscribeOutput.bias }
-        : undefined;
+      const vocabulary =
+        recognitionContext.terms.length > 0
+          ? {
+              terms: recognitionContext.terms,
+              ...(recognitionContext.noteText
+                ? { text: recognitionContext.noteText }
+                : {}),
+            }
+          : undefined;
       const result = await transcribeWithFreestyleCloud({
         token: apiKey,
         audio: audioData,
         appContext,
         mode: useCombined ? "combined" : "raw",
         languages: languagesForCloud,
-        ...(vocabularyOverride ? { vocabulary: vocabularyOverride } : {}),
+        ...(vocabulary ? { vocabulary } : {}),
         ...(useCombined && systemFragments.length > 0
           ? { systemFragments }
           : {}),
@@ -390,15 +404,13 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     }
   } else {
     try {
-      // A plugin-provided bias list is a set of raw terms — rebuild the
-      // provider-specific structure from them rather than the DB vocabulary.
-      const bias = beforeTranscribeOutput.bias
-        ? buildAsrVocabularyBias(
-            voiceProvider,
-            voiceModel,
-            beforeTranscribeOutput.bias,
-          )
-        : resolveAsrVocabularyBias(voiceProvider, voiceModel);
+      const bias = buildAsrVocabularyBias(
+        voiceProvider,
+        voiceModel,
+        recognitionContext.terms,
+        false,
+        recognitionContext.noteText,
+      );
       const providerLanguage =
         voiceProvider === MLX_ASR_PROVIDER_ID ? undefined : primaryLanguage;
       log.debug(`bias=${JSON.stringify(bias)}`);
@@ -526,6 +538,7 @@ const transcribeRoute = new Hono().post("/", async (c) => {
     pp = await postProcess(rawText, appContext, {
       languages: effectiveLanguages,
       source: "batch",
+      recognitionContext: recognitionContext.cleanup,
       api,
     });
   } catch (err) {

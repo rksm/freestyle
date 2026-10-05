@@ -360,9 +360,9 @@ export async function transcribeWithFreestyleCloud(opts: {
   appContext?: string | null;
   mode: "raw" | "combined";
   /**
-   * Per-request custom-vocabulary bias override. Only sent when a
-   * `beforeTranscribe` plugin overrode the ASR bias for this dictation;
-   * otherwise omitted so the cloud uses the user's synced vocabulary.
+   * Per-request custom-vocabulary bias: the local vocabulary plus this
+   * dictation's plugin and context terms. Omitted when there are none, so the
+   * cloud uses the user's synced vocabulary.
    */
   vocabulary?: CloudVocabularyBias;
   /** Plugin-contributed system-prompt fragments (from `beforeCleanup` hook). */

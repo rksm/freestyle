@@ -1,3 +1,4 @@
+import type { RecognitionContext } from "./recognition-context.js";
 import { stripProviderPrefix } from "./streaming/types.js";
 import {
   buildVocabularyNoteText,
@@ -182,7 +183,18 @@ export function resolveAsrVocabularyBias(
   providerId: string,
   modelId: string,
   streaming = false,
+  context?: RecognitionContext,
 ): AsrVocabularyBias | null {
+  if (context) {
+    return buildAsrVocabularyBias(
+      providerId,
+      modelId,
+      context.terms,
+      streaming,
+      context.noteText,
+    );
+  }
+
   const entries = loadVocabularyEntries();
   return buildAsrVocabularyBias(
     providerId,
