@@ -3800,6 +3800,8 @@ function reportSummonConflict(): void {
 }
 
 function registerSummonShortcut(): void {
+  // The summon key opens the Remix composer, which needs Freestyle Cloud.
+  if (REMIX_HOTKEY_DISABLED) return;
   try {
     if (globalShortcut.isRegistered(SUMMON_ACCELERATOR)) {
       globalShortcut.unregister(SUMMON_ACCELERATOR);
