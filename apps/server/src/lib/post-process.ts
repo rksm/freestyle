@@ -21,10 +21,7 @@ import {
   parseCleanupWorkTone,
 } from "@freestyle-voice/validations";
 import type { HookApi } from "freestyle-voice";
-import {
-  getModelCostCached,
-  isCleanupModelSupported,
-} from "../routes/models.js";
+import { getModelCostCached } from "../routes/models.js";
 import { getDb, readSetting, readSettings } from "./db.js";
 import { applyDictionaryReplacements } from "./dictionary-replacements.js";
 import { ensureCleanupPromptConfigFresh } from "./editor/prompt-config.js";
@@ -317,10 +314,6 @@ export async function postProcess(
           cleanedText = normalizedRawText;
         }
       }
-    } else if (!(await isCleanupModelSupported(llm.provider, llm.model_id))) {
-      log.warn(
-        `Skipping LLM cleanup: unsupported cleanup model ${llm.provider}/${llm.model_id}`,
-      );
     } else {
       const { personalSurface } = getRewritePromptContext(
         effectiveAppContext,
@@ -419,7 +412,7 @@ export async function postProcess(
   if (inputTokens > 0 || outputTokens > 0) {
     if (llmProvider && llmModel) {
       // Cache-only lookup — never blocks the response on a models.dev fetch.
-      // The registry is warmed off the hot path by the transcribe pre-warm
+      // The registry is warmed at server start and by the transcribe pre-warm
       // route; a cold-cache miss simply records cost 0.
       const pricing = getModelCostCached(llmProvider, llmModel);
       if (pricing) {

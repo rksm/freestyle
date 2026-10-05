@@ -50,6 +50,9 @@ interface AvailableModel {
 
 const DEPRECATED_STATUS = "deprecated";
 const REGISTRY_FETCH_TIMEOUT_MS = 3000;
+// The models.dev registry is ~4 MB and nothing user-facing waits on its
+// background fetch, so it gets a longer timeout than other registry calls.
+const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
 const UNSUITABLE_CLEANUP_MODEL_PATTERN =
   /guard|safeguard|safety|moderation|classif(?:y|ier|ication)?|embed(?:ding)?|image/i;
 
@@ -253,28 +256,36 @@ function isRegistryCacheFresh(): boolean {
   return !!modelsCache && Date.now() - modelsCache.fetchedAt < CACHE_TTL_MS;
 }
 
+// Shared by concurrent callers so the 4 MB download happens once.
+let registryFetch: Promise<Record<string, unknown>> | null = null;
+
 async function fetchModelsFromRegistry(): Promise<Record<string, unknown>> {
   if (isRegistryCacheFresh()) {
     return (modelsCache as { data: unknown }).data as Record<string, unknown>;
   }
 
-  const res = await fetch("https://models.dev/api.json", {
-    signal: AbortSignal.timeout(REGISTRY_FETCH_TIMEOUT_MS),
+  registryFetch ??= (async () => {
+    const res = await fetch("https://models.dev/api.json", {
+      signal: AbortSignal.timeout(MODELS_DEV_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch models.dev: ${res.status}`);
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    modelsCache = { data, fetchedAt: Date.now() };
+    return data;
+  })().finally(() => {
+    registryFetch = null;
   });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch models.dev: ${res.status}`);
-  }
-  const data = (await res.json()) as Record<string, unknown>;
-  modelsCache = { data, fetchedAt: Date.now() };
-  return data;
+  return registryFetch;
 }
 
 /**
  * Warm the models.dev registry cache in the background (fire-and-forget).
- * Called from the transcribe pre-warm route while the user is still speaking so
- * the per-dictation cost lookup ({@link getModelCostCached}) hits a warm cache
- * and never blocks the response on a network round-trip. No-op when the cache
- * is already fresh; swallows errors (cost is non-critical).
+ * Called at server start and from the transcribe pre-warm route while the user
+ * is still speaking so the per-dictation cost lookup ({@link getModelCostCached})
+ * hits a warm cache and never blocks the response on a network round-trip.
+ * No-op when the cache is already fresh; swallows errors (cost is non-critical).
  */
 export function prewarmModelCostRegistry(): void {
   if (isRegistryCacheFresh()) return;
@@ -310,15 +321,16 @@ function lookupCostInRegistry(
 
 /**
  * Synchronous, cache-only cost lookup for the transcription hot path. Never
- * triggers a network fetch: on a cold/expired cache it returns null (cost is
- * recorded as 0) rather than stalling the user-facing response on a models.dev
- * round-trip. Warm the cache ahead of time via {@link prewarmModelCostRegistry}.
+ * waits on the network: past the TTL it serves the stale registry and refreshes
+ * in the background, and it returns null (cost is recorded as 0) only before
+ * the first successful fetch. Pricing drifts slowly, so stale data is fine.
  */
 export function getModelCostCached(
   providerId: string,
   modelId: string,
 ): { input: number; output: number } | null {
-  if (!isRegistryCacheFresh() || !modelsCache) return null;
+  prewarmModelCostRegistry();
+  if (!modelsCache) return null;
   try {
     return lookupCostInRegistry(
       modelsCache.data as Record<string, unknown>,
@@ -327,38 +339,6 @@ export function getModelCostCached(
     );
   } catch {
     return null;
-  }
-}
-
-export async function isCleanupModelSupported(
-  providerId: string,
-  modelId: string,
-): Promise<boolean> {
-  if (providerId === "local-llm") return true;
-  if (providerId in LLM_GATEWAYS) return true;
-  if (providerId === FREESTYLE_CLOUD_PROVIDER_ID) return true;
-
-  try {
-    const registry = await fetchModelsFromRegistry();
-    const provider = registry[providerId] as RegistryProvider | undefined;
-    if (!provider?.models) return false;
-
-    const shortId = modelId.startsWith(`${providerId}/`)
-      ? modelId.slice(providerId.length + 1)
-      : modelId;
-    const model = provider.models[modelId] ?? provider.models[shortId] ?? null;
-    if (!model) return false;
-
-    const inputMods = model.modalities?.input ?? [];
-    const outputMods = model.modalities?.output ?? [];
-    return (
-      model.status !== DEPRECATED_STATUS &&
-      inputMods.includes("text") &&
-      outputMods.includes("text") &&
-      isCleanupSuitableModel(model)
-    );
-  } catch {
-    return true;
   }
 }
 

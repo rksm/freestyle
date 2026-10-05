@@ -46,6 +46,7 @@ import {
   trustedOriginMiddleware,
 } from "./lib/trusted-origin.js";
 import routes from "./routes";
+import { prewarmModelCostRegistry } from "./routes/models.js";
 
 const httpLog = createAppLogger("http");
 
@@ -239,6 +240,11 @@ export async function startServer(
   // and tone blocks are in memory before the first dictation. Fire-and-forget:
   // it never throws and falls back to the bundled copy when offline.
   void refreshCleanupPromptConfig();
+
+  // Warm the models.dev registry so the first dictation can price its LLM call
+  // without waiting on a ~4 MB download. Fire-and-forget; dictation only ever
+  // reads the cache.
+  prewarmModelCostRegistry();
 
   // Push edits queued while offline before pulling the cloud snapshot, so a
   // pending local change is never overwritten by the copy it was meant to
