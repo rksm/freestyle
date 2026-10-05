@@ -19,7 +19,9 @@
     // not workspace code. They are never imported or built within the monorepo.
     "templates/**",
     // Loaded by GNOME Shell, not imported by workspace code.
-    "integrations/gnome-focus-bridge/extension.js"
+    "integrations/gnome-focus-bridge/extension.js",
+    // Standalone node scripts, run by hand against a live server.
+    "scripts/eval-context/*.mjs"
   ],
   "workspaces": {
     "apps/electron": {
