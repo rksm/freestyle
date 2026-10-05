@@ -127,7 +127,6 @@ import * as linuxAutostart from "./linux-autostart";
 import { checkLinuxSetup } from "./linux-setup";
 import { getNativeBinaryPath } from "./native-binary";
 import {
-  createNotificationWindow,
   hideNotifications,
   notificationWindow,
   setNotificationHeight,
@@ -1379,9 +1378,8 @@ async function probeServerHealth(
   }
 }
 
-// Hotkey configuration and the signed-out fallback both need the same answer
-// during startup. Keep one result for this boot rather than sending a separate
-// health request for every consumer.
+// Several startup steps need the same answer. Keep one result for this boot
+// rather than sending a separate health request for every consumer.
 let serverReadyPromise: Promise<boolean> | null = null;
 
 /**
@@ -2052,8 +2050,7 @@ app.whenReady().then(async () => {
     if (typeof url !== "string") return false;
     try {
       const parsed = new URL(url);
-      // mailto: is allowed for support/sales links (e.g. "Contact sales" in
-      // the upgrade modal); everything else must be http(s).
+      // mailto: is allowed for support links; everything else must be http(s).
       if (
         parsed.protocol !== "https:" &&
         parsed.protocol !== "http:" &&
@@ -2068,55 +2065,27 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("cloud:prompt-sign-in", async () => {
-    const { response } = await dialog.showMessageBox({
-      type: "info",
-      message: "Sign in to Freestyle Transcribe",
-      detail:
-        "Freestyle Transcribe needs you to sign in before it can transcribe or clean up text. Open Models settings to sign in or switch providers.",
-      buttons: ["Open Models", "Not Now"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (response !== 0) return false;
-    openPanelModels();
-    return true;
-  });
+  // There are no accounts, so there is nothing to sign in to or upgrade. The
+  // handlers stay because the pill still calls them when a stale
+  // freestyle-cloud model default answers 401/429.
+  ipcMain.handle("cloud:prompt-sign-in", () => false);
+  ipcMain.handle("cloud:prompt-upgrade", () => false);
 
   ipcMain.handle("local-whisper:prompt-recovery", async () => {
     const { response } = await dialog.showMessageBox({
       type: "warning",
       message: "Local Whisper needs setup",
       detail:
-        "CMake is required to finish setting up Local Whisper. Use Freestyle Cloud instead, or choose another model in Settings > Models.",
-      buttons: ["Use Freestyle Cloud", "Choose another model", "Not now"],
+        "CMake is required to finish setting up Local Whisper. Install it, or choose another model in Settings > Models.",
+      buttons: ["Choose another model", "Not now"],
       defaultId: 0,
-      cancelId: 2,
+      cancelId: 1,
     });
-    if (response === 0) return "cloud";
-    if (response === 1) {
+    if (response === 0) {
       openPanelModels();
       return "models";
     }
     return "dismissed";
-  });
-
-  // Shown when Freestyle Cloud reports the free-tier usage limit is exhausted.
-  // "Upgrade" deep-links into the dashboard with `?upgrade=1`, which the
-  // renderer's UpgradeModalProvider reads to auto-open the Pro upsell modal.
-  ipcMain.handle("cloud:prompt-upgrade", async () => {
-    const { response } = await dialog.showMessageBox({
-      type: "info",
-      message: "Usage limit reached",
-      detail:
-        "You've used all your agent runs for this week. Upgrade to Pro for unlimited runs, or wait for your weekly allowance to reset.",
-      buttons: ["Upgrade to Pro", "Not Now"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (response !== 0) return false;
-    openPanelSettings();
-    return true;
   });
 
   ipcMain.handle(
@@ -2320,35 +2289,10 @@ app.whenReady().then(async () => {
   capturePerson({
     launch_at_login: app.getLoginItemSettings().openAtLogin,
   });
-  // The hidden renderer owns Courier's real-time Inbox connection and asks
-  // main to show the window only while unopened messages exist.
-  createNotificationWindow();
 
-  // Paint the desktop shell as soon as the launch preference permits it. The
-  // local server/auth check runs independently below; waiting for it made a
-  // mostly-static workspace look frozen on every cold start.
+  // Paint the desktop shell as soon as the launch preference permits it.
   const shouldOpenDashboard = readSettings().showDashboardOnLaunch !== false;
   if (shouldOpenDashboard) openPanel();
-
-  // A signed-out launch still surfaces the panel when the signed-in preference
-  // says not to open it. This keeps first-run/sign-out behavior intact without
-  // holding a normal startup behind the server health/auth round-trip.
-  if (!shouldOpenDashboard) {
-    void (async () => {
-      await waitForServerReady();
-      const user = await serverClient()
-        .api.auth.status.$get()
-        .then(async (res) =>
-          res.ok ? ((await res.json()).user ?? null) : null,
-        )
-        .catch(() => null);
-      // A signed-out launch always needs the sign-in gate. Signed-in users can
-      // opt out of the restored desktop workspace opening automatically.
-      // The auth probe can outlive an E2E shutdown or a fast user quit. Do not
-      // touch Electron's display APIs once teardown has started.
-      if (!isQuitting && !user) openPanel();
-    })();
-  }
 
   createTray();
 
@@ -4192,9 +4136,14 @@ function handleRemixHotkeyUp(): void {
   captureRemixSelection();
 }
 
+const REMIX_HOTKEY_DISABLED = true;
+
 /** Start the Remix native listener. No globalShortcut fallback (needs hold/tap). */
 async function registerRemixHotkey(hotkey?: string): Promise<void> {
   if (isQuitting) return;
+  // Remix runs on Freestyle Cloud and this build has no account, so claiming
+  // the hotkey would only swallow the keys for a feature that cannot start.
+  if (REMIX_HOTKEY_DISABLED) return;
   if (remixKeyListener) {
     await remixKeyListener.stop();
     remixKeyListener = null;

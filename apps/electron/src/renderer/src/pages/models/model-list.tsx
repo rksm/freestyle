@@ -232,7 +232,6 @@ export function ModelList({
   voiceView,
   llmView,
   m,
-  cloudBusy,
   catalogLoading,
   onClose,
   onPickCloud,
@@ -243,7 +242,6 @@ export function ModelList({
   voiceView?: "tiers" | "all" | "local" | "cloud";
   llmView?: "tiers" | "all" | "local" | "cloud";
   m: UseModels;
-  cloudBusy?: boolean;
   catalogLoading: boolean;
   onClose: () => void;
   onPickCloud: (model: AvailableModel) => void;
@@ -285,10 +283,8 @@ export function ModelList({
     return (
       <TranscriptionPicker
         m={m}
-        busy={cloudBusy}
         catalogLoading={catalogLoading}
         onClose={onClose}
-        onPickCloud={onPickCloud}
         onBrowseLocal={() => setView("local")}
         onBrowseCloud={() => setView("cloud")}
       />

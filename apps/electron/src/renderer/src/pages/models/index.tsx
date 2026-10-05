@@ -1,6 +1,5 @@
 import { Button } from "@renderer/components/ui/button";
 import { Skeleton } from "@renderer/components/ui/skeleton";
-import { useCloudAuth } from "@renderer/lib/auth-context";
 import type { AvailableModel } from "@renderer/lib/models";
 import { cn, ON_DEVICE_PHRASE } from "@renderer/lib/utils";
 import {
@@ -11,44 +10,22 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { FreestyleCloudBundleCard } from "./freestyle-cloud-bundle-card";
 import { MlxWarmingDialog } from "./mlx-memory-section";
 import { ConfirmDialog, type ModalState, ModelModal } from "./model-modal";
 import { Eyebrow, PageShell } from "./page-chrome";
 import { PairCard } from "./pair-card";
-import { RemixModelCard } from "./remix-model-card";
-import {
-  FREESTYLE_CLOUD_CLEANUP,
-  FREESTYLE_CLOUD_TIER,
-} from "./transcription-picker";
 import type { ApiKeyEntry, ConfiguredModel } from "./types";
 import { useModels } from "./use-models";
 import { displayName } from "./utils";
 
-/**
- * Managed provider that needs no key. It can handle transcription, cleanup, or
- * both, depending on which sides the user routes to it.
- */
-const FREESTYLE_CLOUD_PROVIDER = "freestyle-cloud";
-
-const FREESTYLE_CLOUD_REMIX: AvailableModel = {
-  provider_id: FREESTYLE_CLOUD_PROVIDER,
-  provider_name: "Freestyle Cloud",
-  model_id: "freestyle-cloud/remix",
-  model_name: "Freestyle Cloud",
-  type: "llm",
-};
-
 export default function ModelsPage(): React.JSX.Element {
   const { t } = useTranslation();
   const m = useModels();
-  const cloudAuth = useCloudAuth();
   const [modal, setModal] = useState<ModalState | null>(null);
   const [saving, setSaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [cloudBusy, setCloudBusy] = useState(false);
 
   const [pendingLocalDelete, setPendingLocalDelete] = useState<{
     defId: string;
@@ -60,66 +37,6 @@ export default function ModelsPage(): React.JSX.Element {
   >(null);
   const [warmingOpen, setWarmingOpen] = useState(false);
 
-  const freestyleVoiceActive =
-    m.defaultVoice?.provider === FREESTYLE_CLOUD_PROVIDER;
-  const syncingFreestyleCleanup = useRef(false);
-
-  const cloudUserId = cloudAuth.user?.id ?? null;
-  const reloadModels = m.reload;
-  // Refetch only when the signed-in user actually changes, so the sign-in
-  // switch to Freestyle Transcribe (and the sign-out revert) is reflected. The
-  // initial mount is skipped — the queries already load themselves, so reloading
-  // here would just refetch the same data a second time.
-  const prevCloudUserId = useRef<string | null>(cloudUserId);
-  useEffect(() => {
-    if (prevCloudUserId.current === cloudUserId) return;
-    prevCloudUserId.current = cloudUserId;
-    void reloadModels();
-  }, [cloudUserId, reloadModels]);
-
-  // Keep Freestyle Cleanup paired with Freestyle Transcribe. Wait for the
-  // persisted settings to seed into `m.llmCleanup` first — reading it before
-  // then sees the initial `false` and re-configures cleanup on every mount.
-  useEffect(() => {
-    if (
-      m.loading ||
-      !m.settingsSeeded ||
-      !freestyleVoiceActive ||
-      syncingFreestyleCleanup.current
-    ) {
-      return;
-    }
-    const needsSync =
-      !m.llmCleanup ||
-      m.defaultLlm?.provider !== FREESTYLE_CLOUD_PROVIDER ||
-      m.defaultLlm?.model_id !== FREESTYLE_CLOUD_CLEANUP.model_id;
-    if (!needsSync) return;
-
-    syncingFreestyleCleanup.current = true;
-    void (async () => {
-      try {
-        if (cloudAuth.user && (await cloudAuth.refresh())) {
-          setCloudBusy(true);
-          await m.configureModel(FREESTYLE_CLOUD_CLEANUP, "llm");
-          m.setCleanup(true);
-        }
-      } finally {
-        setCloudBusy(false);
-        syncingFreestyleCleanup.current = false;
-      }
-    })();
-  }, [
-    m.loading,
-    m.settingsSeeded,
-    freestyleVoiceActive,
-    m.llmCleanup,
-    m.defaultLlm?.provider,
-    m.defaultLlm?.model_id,
-    m.configureModel,
-    m.setCleanup,
-    cloudAuth,
-  ]);
-
   // -------------------------------------------------------------------------
   // Modal flow
   // -------------------------------------------------------------------------
@@ -130,37 +47,12 @@ export default function ModelsPage(): React.JSX.Element {
     setSaving(false);
   };
 
-  const ensureCloudAuth = async (): Promise<boolean> => {
-    if (cloudAuth.user && (await cloudAuth.refresh())) return true;
-    return !!(await cloudAuth.signIn());
-  };
-
-  const configureFreestylePair = async (): Promise<void> => {
-    setCloudBusy(true);
-    try {
-      if (!(await ensureCloudAuth())) return;
-      await m.configureModel(FREESTYLE_CLOUD_TIER, "voice");
-      await m.configureModel(FREESTYLE_CLOUD_CLEANUP, "llm");
-      m.setCleanup(true);
-    } finally {
-      setCloudBusy(false);
-    }
-  };
-
   const configureVoice = (
     model: AvailableModel,
     { closeAfter = false }: { closeAfter?: boolean } = {},
   ): void => {
-    if (model.provider_id === FREESTYLE_CLOUD_PROVIDER) {
-      void configureFreestylePair().then(() => {
-        if (closeAfter) closeModal();
-      });
-      return;
-    }
-
     const needsKey =
       model.provider_id !== "local-llm" &&
-      model.provider_id !== FREESTYLE_CLOUD_PROVIDER &&
       !m.keyProviders.has(model.provider_id);
     if (needsKey) {
       setKeyError(null);
@@ -182,25 +74,11 @@ export default function ModelsPage(): React.JSX.Element {
     setModal({ kind: "list", type: "voice", voiceView: "tiers" });
 
   const openLlm = (): void => {
-    if (freestyleVoiceActive) return;
     m.setCleanup(true);
     setModal({ kind: "list", type: "llm", llmView: "tiers" });
   };
 
-  const openRemix = (): void => setModal({ kind: "list", type: "remix" });
-
-  const configureFreestyleRemix = async (): Promise<void> => {
-    setCloudBusy(true);
-    try {
-      if (!(await ensureCloudAuth())) return;
-      await m.configureModel(FREESTYLE_CLOUD_REMIX, "remix");
-    } finally {
-      setCloudBusy(false);
-    }
-  };
-
   const onToggleCleanup = (next: boolean): void => {
-    if (freestyleVoiceActive) return;
     if (!next) {
       m.setCleanup(false);
       return;
@@ -220,33 +98,8 @@ export default function ModelsPage(): React.JSX.Element {
       return;
     }
 
-    if (type === "llm" && freestyleVoiceActive) return;
-
-    if (
-      type === "llm" &&
-      model.provider_id === FREESTYLE_CLOUD_PROVIDER &&
-      model.model_id === FREESTYLE_CLOUD_CLEANUP.model_id
-    ) {
-      return;
-    }
-
-    if (model.provider_id === FREESTYLE_CLOUD_PROVIDER) {
-      void (async () => {
-        setCloudBusy(true);
-        try {
-          if (!(await ensureCloudAuth())) return;
-          await m.configureModel(model, type);
-        } finally {
-          setCloudBusy(false);
-        }
-        closeModal();
-      })();
-      return;
-    }
-
     const needsKey =
       model.provider_id !== "local-llm" &&
-      model.provider_id !== FREESTYLE_CLOUD_PROVIDER &&
       !m.keyProviders.has(model.provider_id);
     if (needsKey) {
       setKeyError(null);
@@ -308,14 +161,7 @@ export default function ModelsPage(): React.JSX.Element {
         return;
       }
       if (pendingModel && type) {
-        if (
-          type === "voice" &&
-          pendingModel.provider_id === FREESTYLE_CLOUD_PROVIDER
-        ) {
-          await configureFreestylePair();
-        } else {
-          await m.configureModel(pendingModel, type);
-        }
+        await m.configureModel(pendingModel, type);
       }
       closeModal();
     })();
@@ -351,39 +197,16 @@ export default function ModelsPage(): React.JSX.Element {
         <div className="space-y-6">
           <section aria-label="Dictation models" className="space-y-3">
             <Eyebrow text="Dictation models" mono={false} />
-            <FreestyleCloudBundleCard
-              active={
-                freestyleVoiceActive &&
-                m.llmCleanup &&
-                m.defaultLlm?.provider === FREESTYLE_CLOUD_PROVIDER &&
-                m.defaultLlm?.model_id === FREESTYLE_CLOUD_CLEANUP.model_id
-              }
-              signedIn={!!cloudAuth.user}
-              busy={cloudBusy}
-              onUse={() => void configureFreestylePair()}
-            />
-
             <PairCard
               voice={m.defaultVoice}
               llm={m.defaultLlm}
               llmCleanup={m.llmCleanup}
-              cleanupLocked={freestyleVoiceActive}
               onToggleCleanup={onToggleCleanup}
               onChangeVoice={openVoice}
               onChangeLlm={openLlm}
               onConfigureWarming={
                 showMlxWarming ? () => setWarmingOpen(true) : undefined
               }
-            />
-          </section>
-
-          <section aria-label="Remix runtime" className="space-y-3">
-            <Eyebrow text="Remix runtime" mono={false} />
-            <RemixModelCard
-              model={m.defaultRemix}
-              busy={cloudBusy}
-              onChooseModel={openRemix}
-              onUseCloud={() => void configureFreestyleRemix()}
             />
           </section>
 
@@ -419,7 +242,6 @@ export default function ModelsPage(): React.JSX.Element {
             m={m}
             saving={saving}
             keyError={keyError}
-            cloudBusy={cloudBusy}
             catalogLoading={m.catalogLoading}
             onClose={closeModal}
             onPickCloud={onPickCloud}

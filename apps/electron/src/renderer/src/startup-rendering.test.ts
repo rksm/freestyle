@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 const rendererRoot = dirname(fileURLToPath(import.meta.url));
 
 describe("dashboard startup rendering", () => {
-  it("keeps the application shell and page data mounted while authentication verifies", async () => {
+  it("mounts the application shell directly, with no sign-in gate", async () => {
     const [dashboard, gate, shell] = await Promise.all([
       readFile(resolve(rendererRoot, "dashboard.tsx"), "utf8"),
       readFile(resolve(rendererRoot, "components/login-gate.tsx"), "utf8"),
@@ -15,26 +15,19 @@ describe("dashboard startup rendering", () => {
 
     expect(dashboard).toContain("<Route element={<AppShell />}>");
     expect(dashboard).toContain("<ProtectedOutlet />");
-    expect(gate).not.toContain("StartupContentPlaceholder");
-    expect(gate).toContain('if (phase === "signed_out") return <LoginPage />;');
-    expect(shell).toContain("function SignedOutShell");
-    expect(shell).toContain(
-      'if (phase === "signed_out") return <SignedOutShell />;',
-    );
-    expect(shell).toContain(
-      'className="glass-content relative flex min-h-0 min-w-0 flex-1 flex-col"',
-    );
+    expect(gate).toContain("return <>{children}</>;");
+    expect(gate).not.toContain("useCloudAuth");
+    expect(shell).not.toContain("SignedOutShell");
+    expect(shell).not.toContain("CloudProfileButton");
   });
 
-  it("resolves the configured API target before auth and background queries", async () => {
-    const [api, auth, dashboard] = await Promise.all([
+  it("resolves the configured API target before background queries", async () => {
+    const [api, dashboard] = await Promise.all([
       readFile(resolve(rendererRoot, "lib/api.ts"), "utf8"),
-      readFile(resolve(rendererRoot, "lib/auth-context.tsx"), "utf8"),
       readFile(resolve(rendererRoot, "dashboard.tsx"), "utf8"),
     ]);
 
     expect(api).toContain("export async function resolveApiBase");
-    expect(auth).toContain("await resolveApiBase();");
     expect(dashboard).toContain("void resolveApiBase().then(() =>");
     expect(dashboard).not.toContain("void initApiBase().then(() =>");
   });
@@ -53,7 +46,6 @@ describe("dashboard startup rendering", () => {
     expect(dashboard).toContain('title: "Shortcuts"');
     expect(dashboard).toContain('title: "Vocabulary"');
     expect(dashboard).toContain('title: "Plugins"');
-    expect(dashboard).toContain('title: "Profile"');
     expect(dashboard).not.toContain(
       'return <div className="min-h-0 flex-1" />;',
     );
@@ -79,38 +71,18 @@ describe("dashboard startup rendering", () => {
     expect(tone).not.toContain('t("tone.loading")');
   });
 
-  it("starts read-only data queries while authentication is still checking", async () => {
-    const [api, auth, history, panel, sessions, shell, upgrade] =
-      await Promise.all([
-        readFile(resolve(rendererRoot, "lib/api.ts"), "utf8"),
-        readFile(resolve(rendererRoot, "lib/auth-context.tsx"), "utf8"),
-        readFile(resolve(rendererRoot, "pages/history.tsx"), "utf8"),
-        readFile(resolve(rendererRoot, "components/panel.tsx"), "utf8"),
-        readFile(
-          resolve(rendererRoot, "components/remix-session-context.tsx"),
-          "utf8",
-        ),
-        readFile(resolve(rendererRoot, "shell.tsx"), "utf8"),
-        readFile(resolve(rendererRoot, "components/upgrade-modal.tsx"), "utf8"),
-      ]);
+  it("treats every window as signed in without asking the server", async () => {
+    const [auth, history] = await Promise.all([
+      readFile(resolve(rendererRoot, "lib/auth-context.tsx"), "utf8"),
+      readFile(resolve(rendererRoot, "pages/history.tsx"), "utf8"),
+    ]);
 
-    expect(api).toContain("export function subscribeToUnauthorized");
-    expect(api).toContain("fetch: resolvedClientFetch");
-    expect(auth).toContain("subscribeToUnauthorized");
-    expect(auth).toContain("resetAccountCaches(queryClient)");
-    expect(auth).toContain("refetchInterval");
-    expect(auth).toContain("enabled: !forcedSignedOut");
-    expect(sessions).toContain("enabled: canRequestData");
-    expect(shell).toContain("enabled: canRequestData");
-    expect(sessions).toContain(
-      "const { canRequestData, phase } = useCloudAuth();",
-    );
+    expect(auth).toContain('phase: "authenticated"');
+    expect(auth).not.toContain("fetch");
+    expect(auth).not.toContain("getClient");
+    expect(auth).not.toContain("useQuery");
     expect(history).toContain('aria-label="Loading transcription history"');
     expect(history).toContain("{searchRow}");
-    expect(panel).toContain("RemixWorkspaceLoadingSkeleton");
-    expect(panel).toContain('aria-label="Loading conversation"');
-    expect(upgrade).toContain("useCheckoutState");
-    expect(upgrade).toContain('open || checkoutStatus === "pending"');
   });
 
   it("lets the notification token request establish availability", async () => {
@@ -139,7 +111,7 @@ describe("dashboard startup rendering", () => {
     expect(main).toContain(
       "if (!getServerUrl()) serverReadyPromise = Promise.resolve(true);",
     );
-    expect(main.match(/waitForServerReady\(\)/g)).toHaveLength(2);
+    expect(main.match(/waitForServerReady\(\)/g)).toHaveLength(1);
     expect(main).not.toContain(
       "for (let attempt = 0; attempt < 20; attempt++)",
     );

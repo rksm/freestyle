@@ -54,17 +54,18 @@ describe("Models local-runtime reliability", () => {
     expect(picker).toContain('t("models.picker.checkingAvailability")');
   });
 
-  it("keeps the managed Cloud path as one all-in-one action", async () => {
-    const [page, bundle] = await Promise.all([
+  it("offers no Freestyle Cloud path, since the app has no account", async () => {
+    const [page, picker, models] = await Promise.all([
       readFile(resolve(modelsRoot, "index.tsx"), "utf8"),
-      readFile(resolve(modelsRoot, "freestyle-cloud-bundle-card.tsx"), "utf8"),
+      readFile(resolve(modelsRoot, "transcription-picker.tsx"), "utf8"),
+      readFile(resolve(modelsRoot, "../../lib/models.ts"), "utf8"),
     ]);
 
-    expect(page).toContain("<FreestyleCloudBundleCard");
-    expect(page).toContain("onUse={() => void configureFreestylePair()}");
-    expect(bundle).toContain('data-testid="freestyle-cloud-bundle"');
-    expect(bundle).toContain('t("models.freestyleCloud.use")');
-    expect(bundle).toContain('t("models.freestyleCloud.signedInDescription")');
-    expect(bundle).not.toContain("CloudRouteOption");
+    expect(page).not.toContain("FreestyleCloudBundleCard");
+    expect(page).not.toContain("useCloudAuth");
+    expect(picker).not.toContain("onPickCloud(FREESTYLE_CLOUD_TIER)");
+    expect(models).not.toMatch(
+      /(?:VOICE|LLM)_PROVIDERS = \[\s*FREESTYLE_CLOUD_PROVIDER_ID/,
+    );
   });
 });

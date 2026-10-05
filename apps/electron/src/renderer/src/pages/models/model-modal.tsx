@@ -85,7 +85,6 @@ export function ModelModal({
   m,
   saving,
   keyError,
-  cloudBusy,
   catalogLoading,
   onClose,
   onPickCloud,
@@ -98,7 +97,6 @@ export function ModelModal({
   m: UseModels;
   saving: boolean;
   keyError: string | null;
-  cloudBusy?: boolean;
   catalogLoading: boolean;
   onClose: () => void;
   onPickCloud: (model: AvailableModel) => void;
@@ -144,7 +142,6 @@ export function ModelModal({
         voiceView={modal.type === "voice" ? modal.voiceView : undefined}
         llmView={modal.type === "llm" ? modal.llmView : undefined}
         m={m}
-        cloudBusy={cloudBusy}
         catalogLoading={catalogLoading}
         onClose={onClose}
         onPickCloud={onPickCloud}

@@ -58,7 +58,7 @@ function useLocalFallback(): LanguageChoice[] {
 
 /** Resolve the ordered option list from cloud suggestions + local fallback. */
 export function useLanguageOptions(
-  suggested: SuggestedLanguage[] | undefined,
+  suggested?: SuggestedLanguage[],
 ): LanguageChoice[] {
   const fallback = useLocalFallback();
   return useMemo(

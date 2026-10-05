@@ -81,8 +81,9 @@ export interface MlxAsrStatus {
 export const FREESTYLE_CLOUD_PROVIDER_ID = "freestyle-cloud";
 export const FREESTYLE_CLOUD_MODEL_ID = "freestyle-cloud/stt";
 
+// Freestyle Cloud is deliberately absent from these lists: the app has no
+// account, so its models are never offered.
 export const CLOUD_VOICE_PROVIDERS = [
-  FREESTYLE_CLOUD_PROVIDER_ID,
   "openai",
   "groq",
   "deepgram",
@@ -97,7 +98,6 @@ export const VOICE_PROVIDERS = [
 ];
 
 export const LLM_PROVIDERS = [
-  FREESTYLE_CLOUD_PROVIDER_ID,
   "openai",
   "anthropic",
   "google",

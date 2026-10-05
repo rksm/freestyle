@@ -12,6 +12,13 @@
   "ignoreFiles": [
     "apps/electron/src/preload/*.d.ts",
     "apps/electron/src/renderer/src/env.d.ts",
+    // Cloud-only Remix surfaces. The app has no account, so nothing mounts them,
+    // but they stay in the tree so upstream merges touch them without conflicts.
+    "apps/electron/src/renderer/src/pages/remix-workspace.tsx",
+    "apps/electron/src/renderer/src/remix-foundation.css",
+    "apps/electron/src/renderer/src/remix-workspace.css",
+    "apps/electron/src/renderer/src/components/mcp-connections.tsx",
+    "apps/electron/src/renderer/src/components/notifications-history.tsx",
     // This plugin's standalone HTML entry owns its stylesheet; Knip follows
     // TypeScript imports but not the HTML <link> edge.
     "plugins/audio-transcription/ui/src/styles.css",

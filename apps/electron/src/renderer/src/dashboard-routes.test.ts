@@ -84,39 +84,27 @@ describe("dashboard routes", () => {
     );
   });
 
-  it("keeps Profile as its own user-menu destination", async () => {
+  it("opens the Today page at startup", async () => {
     const dashboard = await readFile(dashboardPath, "utf8");
 
-    expect(dashboard).toContain(
-      'const ProfilePage = lazy(() => import("@renderer/pages/profile"))',
-    );
     expect(dashboard).toMatch(
-      /<Route\s+path="\/profile"\s+element=\{\s*<LazyRoute>\s*<ProfilePage\s*\/>\s*<\/LazyRoute>\s*\}\s*\/>/s,
+      /<Route\s+path="\/"\s+element=\{\s*<Navigate\s+to="\/today"\s+replace\s*\/>\s*\}\s*\/>/s,
     );
   });
 
-  it("uses the persisted workspace for the startup route", async () => {
+  it("redirects the cloud-only routes instead of mounting them", async () => {
     const dashboard = await readFile(dashboardPath, "utf8");
 
-    expect(dashboard).toContain("function DashboardHomeRedirect()");
-    expect(dashboard).toContain("WORKSPACE_STORAGE_KEY");
-    expect(dashboard).toContain("workspaceHomeRoute(workspace)");
-    expect(dashboard).toContain("element={<DashboardHomeRedirect />}");
-    expect(dashboard).not.toContain(
-      'element={<Navigate to="/remix" replace />}',
-    );
-  });
-
-  it("keeps first-run onboarding at the app boundary instead of in Remix", async () => {
-    const dashboard = await readFile(dashboardPath, "utf8");
-
-    expect(dashboard).toContain(
-      'const OnboardingPage = lazy(() => import("@renderer/pages/onboarding"))',
-    );
-    expect(dashboard).toMatch(
-      /<Route\s+path="\/onboarding"\s+element=\{\s*<LazyRoute>\s*<OnboardingPage\s*\/>\s*<\/LazyRoute>\s*\}\s*\/>/s,
-    );
-    expect(dashboard).toContain("function OnboardingOutlet()");
-    expect(dashboard).toContain("<Route element={<OnboardingOutlet />}>");
+    for (const path of ["/remix", "/onboarding", "/profile"]) {
+      expect(dashboard).toMatch(
+        new RegExp(
+          `<Route\\s+path="${path}"\\s+element=\\{\\s*<Navigate\\s+to="/today"\\s+replace\\s*/>\\s*\\}\\s*/>`,
+          "s",
+        ),
+      );
+    }
+    expect(dashboard).not.toContain("RemixSessionProvider");
+    expect(dashboard).not.toContain("CloudSignInModal");
+    expect(dashboard).not.toContain("UpgradeModalProvider");
   });
 });

@@ -9,17 +9,6 @@ const dashboardPath = resolve(rendererRoot, "dashboard.tsx");
 const globalsPath = resolve(rendererRoot, "globals.css");
 
 describe("settings consolidation", () => {
-  it("keeps the former Remix-only data controls in dedicated Settings", async () => {
-    const settings = await readFile(
-      resolve(rendererRoot, "pages/settings.tsx"),
-      "utf8",
-    );
-
-    expect(settings).toContain("NotificationsHistory");
-    expect(settings).toContain('apiFetch("/api/brain/export")');
-    expect(settings).toContain('apiFetch("/api/brain/clear"');
-  });
-
   it("does not retain a second settings surface in the Remix workspace", async () => {
     const panel = await readFile(
       resolve(rendererRoot, "components/panel.tsx"),
@@ -59,7 +48,6 @@ describe("settings consolidation", () => {
     expect(settings).not.toContain("function SettingsSidebar");
     expect(shell).toContain("function SettingsSidebar");
     expect(shell).toContain('to: "/settings/transcription"');
-    expect(shell).toContain('to: "/settings/apps"');
     expect(shell).toContain('to: "/settings/network"');
     const settingsNavigation = shell.slice(
       shell.indexOf("const SETTINGS_NAV_GROUPS"),
@@ -71,7 +59,7 @@ describe("settings consolidation", () => {
     expect(settingsNavigation).toContain('to: "/settings/models"');
     const dictationGroup = settingsNavigation.slice(
       settingsNavigation.indexOf('label: "Dictation"'),
-      settingsNavigation.indexOf('label: "Remix"'),
+      settingsNavigation.indexOf('label: "General"'),
     );
     const generalGroup = settingsNavigation.slice(
       settingsNavigation.indexOf('label: "General"'),
@@ -96,26 +84,5 @@ describe("settings consolidation", () => {
     expect(dashboard).toMatch(
       /<Route\s+path="\/settings\/:section"\s+element=\{\s*<LazyRoute>\s*<SettingsPage\s*\/>\s*<\/LazyRoute>\s*\}\s*\/>/s,
     );
-  });
-
-  it("uses an account-management view instead of plan comparisons for Pro", async () => {
-    const settings = await readFile(
-      resolve(rendererRoot, "pages/settings.tsx"),
-      "utf8",
-    );
-    const upgradeModal = await readFile(
-      resolve(rendererRoot, "components/upgrade-modal.tsx"),
-      "utf8",
-    );
-
-    expect(settings).toContain("isPro ? (");
-    expect(settings).toContain("<ProMembership");
-    expect(settings).toContain("isPro={false}");
-    expect(settings).toContain("{!isPro && (");
-    expect(upgradeModal).toContain('aria-label="Pro membership"');
-    expect(upgradeModal).toContain(
-      "Everything in Pro is ready across your devices.",
-    );
-    expect(upgradeModal).toContain("Manage subscription");
   });
 });

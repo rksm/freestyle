@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 const componentDir = dirname(fileURLToPath(import.meta.url));
 const railPath = resolve(componentDir, "remix-context-rail.tsx");
 const panelPath = resolve(componentDir, "panel.tsx");
-const settingsPath = resolve(componentDir, "../pages/settings.tsx");
 const stylesPath = resolve(componentDir, "../remix-workspace.css");
 
 describe("Remix context rail", () => {
@@ -84,16 +83,5 @@ describe("Remix context rail", () => {
     expect(styles).toContain("@media (max-width: 1080px)");
     expect(styles).toContain("inset: 0 0 0 auto;");
     expect(railStyles).toContain("position: relative;");
-  });
-
-  it("places the app directory under Settings rather than the desktop Remix rail", async () => {
-    const [panel, settings] = await Promise.all([
-      readFile(panelPath, "utf8"),
-      readFile(settingsPath, "utf8"),
-    ]);
-
-    expect(settings).toContain('"connectedApps"');
-    expect(settings).toContain("<ConnectedApps />");
-    expect(panel).toContain("window.api.openSettings();");
   });
 });

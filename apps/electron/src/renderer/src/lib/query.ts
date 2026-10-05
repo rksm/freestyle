@@ -139,17 +139,6 @@ export const queryKeys = {
     ["remix", "runs", "thread", threadId] as const,
   /** A compact, display-only view of work that needs the user's attention. */
   attention: ["attention"] as const,
-
-  cloud: {
-    authStatus: ["cloud-auth-status"] as const,
-    usage: ["cloud-usage"] as const,
-    orgs: ["cloud-orgs"] as const,
-    activeOrg: ["cloud-active-org"] as const,
-    accounts: ["cloud-accounts"] as const,
-    profileFields: ["cloud-profile-fields"] as const,
-    config: ["cloud-config"] as const,
-    pricing: ["cloud-pricing"] as const,
-  },
 } as const;
 
 /**

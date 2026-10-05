@@ -8,8 +8,6 @@ import {
   serverUrlSchema,
 } from "@freestyle-voice/validations";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AsyncActionButton } from "@renderer/components/async-action-button";
-import { ConnectedApps } from "@renderer/components/connected-apps";
 import { DragSpacer } from "@renderer/components/drag-spacer";
 import { KeyComboDisplay } from "@renderer/components/key-combo";
 import {
@@ -17,16 +15,12 @@ import {
   useLanguageOptions,
 } from "@renderer/components/language-combobox";
 import { LanguageSelector } from "@renderer/components/language-selector";
-import { McpConnections } from "@renderer/components/mcp-connections";
-import { NotificationsHistory } from "@renderer/components/notifications-history";
-import { useRemixSession } from "@renderer/components/remix-session-context";
 import { Button } from "@renderer/components/ui/button";
 import { Input } from "@renderer/components/ui/input";
 import {
   InputGroup,
   InputGroupInput,
 } from "@renderer/components/ui/input-group";
-import { Progress } from "@renderer/components/ui/progress";
 import { RevealToggle } from "@renderer/components/ui/reveal-toggle";
 import { SegmentedControl } from "@renderer/components/ui/segmented-control";
 import {
@@ -38,50 +32,25 @@ import {
 } from "@renderer/components/ui/select";
 import { Switch } from "@renderer/components/ui/switch";
 import {
-  PricingPlans,
-  ProMembership,
-} from "@renderer/components/upgrade-modal";
-import {
-  acceleratorsEqual,
   comboDisplayKeys,
   formatAcceleratorKeys,
   keyDisplayLabel,
   useHotkeyRecorder,
 } from "@renderer/hooks/use-hotkey-recorder";
 import {
-  apiFetch,
   checkServerAuth,
   checkServerHealth,
   getClient,
   getLocalApiBase,
   refreshApiBase,
 } from "@renderer/lib/api";
-import { useCloudAuth } from "@renderer/lib/auth-context";
-import { resetBrainCache } from "@renderer/lib/brain-fs";
-import {
-  setDeletionConfirmationSkipped,
-  shouldSkipDeletionConfirmation,
-} from "@renderer/lib/deletion-confirmation";
-import { formatNumber } from "@renderer/lib/format";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
 import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@renderer/lib/platform";
-import {
-  invalidateThreads,
-  queryKeys,
-  settingsQueryOptions,
-} from "@renderer/lib/query";
-import { getThread } from "@renderer/lib/threads";
-import { useCloudConfig } from "@renderer/lib/use-cloud-config";
-import {
-  type CloudUsageBalance,
-  usagePercent,
-  useCloudUsage,
-} from "@renderer/lib/use-cloud-usage";
+import { queryKeys, settingsQueryOptions } from "@renderer/lib/query";
 import { cn } from "@renderer/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
-  Cloud,
   ExternalLink,
   FolderOpen,
   Info,
@@ -91,7 +60,6 @@ import {
   Monitor,
   Moon,
   Pause,
-  RefreshCw,
   Sun,
   Trash2,
   Volume2,
@@ -105,7 +73,7 @@ import {
   useForm,
 } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import {
   type AudioPlaybackMode,
   normalizeAudioPlaybackMode,
@@ -115,7 +83,6 @@ import {
   normalizePillCancelMode,
   type PillCancelMode,
 } from "../../../shared/pill-cancel";
-import { getDefaultRemixHotkey } from "../../../shared/remix";
 import { SETTINGS_KEYS } from "../../../shared/settings-keys";
 
 // ---------------------------------------------------------------------------
@@ -144,15 +111,10 @@ const audioPlaybackOptions = [
 
 const settingsSectionIds = [
   "recording",
-  "remix",
-  "mcp",
   "application",
   "display",
   "permissions",
-  "notifications",
-  "connectedApps",
   "data",
-  "billing",
   "network",
 ] as const;
 
@@ -160,15 +122,10 @@ type SettingsSectionId = (typeof settingsSectionIds)[number];
 
 const settingsRouteSections = {
   transcription: "recording",
-  remix: "remix",
-  mcp: "mcp",
   application: "application",
   appearance: "display",
   permissions: "permissions",
-  notifications: "notifications",
-  apps: "connectedApps",
   data: "data",
-  billing: "billing",
   network: "network",
 } as const satisfies Record<string, SettingsSectionId>;
 
@@ -207,20 +164,13 @@ function parseLanguagesSetting(s: Record<string, string>): string[] {
 export default function SettingsPage(): React.JSX.Element {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
-  const { user } = useCloudAuth();
-  const navigate = useNavigate();
   const { section } = useParams();
-  const { startNewThread, switchThread } = useRemixSession();
-  const { data: cloudConfig } = useCloudConfig(!!user);
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [hotkey, setHotkey] = useState(
     window.api?.defaultHotkey ?? getDefaultHotkey(),
   );
   const [hotkeyMode, setHotkeyMode] = useState<"hold" | "toggle">("hold");
-  const [remixHotkey, setRemixHotkey] = useState(
-    window.api?.defaultRemixHotkey ?? getDefaultRemixHotkey(),
-  );
   const [languages, setLanguages] = useState<string[]>([]);
   const [translateMode, setTranslateMode] = useState(false);
   const [outputMode, setOutputMode] = useState("paste");
@@ -228,12 +178,6 @@ export default function SettingsPage(): React.JSX.Element {
   const [pillCancel, setPillCancel] = useState<PillCancelMode>("hover");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [historyPaused, setHistoryPaused] = useState(false);
-  const [skipSessionDeletionConfirmation, setSkipSessionDeletionConfirmation] =
-    useState(() => shouldSkipDeletionConfirmation("session"));
-  const [
-    skipScheduleDeletionConfirmation,
-    setSkipScheduleDeletionConfirmation,
-  ] = useState(() => shouldSkipDeletionConfirmation("schedule"));
   const [historyRetention, setHistoryRetention] = useState<
     "never" | "7" | "30" | "custom"
   >("never");
@@ -257,9 +201,7 @@ export default function SettingsPage(): React.JSX.Element {
     [devices, t],
   );
 
-  // Full transcription-language set from the cloud (all Soniox languages,
-  // region-ordered), falling back to the bundled list when offline.
-  const languageOptions = useLanguageOptions(cloudConfig?.suggestedLanguages);
+  const languageOptions = useLanguageOptions();
 
   // Translate mode enforces a single output language, so it only applies when
   // exactly one language is selected. Its label is that language's name.
@@ -382,19 +324,6 @@ export default function SettingsPage(): React.JSX.Element {
       .catch(() => {});
   }, []);
 
-  // The remix listener re-reads its accelerator from the server rather than
-  // being handed one, so the reload has to wait for the write to land.
-  const handleRemixHotkeyRecorded = useCallback((accelerator: string) => {
-    setRemixHotkey(accelerator);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.remixHotkey },
-        json: { value: accelerator },
-      })
-      .then(() => window.api?.reloadRemixHotkey?.())
-      .catch(() => {});
-  }, []);
-
   const {
     state: recorderState,
     liveModifiers,
@@ -405,23 +334,7 @@ export default function SettingsPage(): React.JSX.Element {
     blockedNotice,
     startRecording: startHotkeyRecording,
     cancelRecording: cancelHotkeyRecording,
-  } = useHotkeyRecorder(handleHotkeyRecorded, {
-    isBlocked: (accel) => acceleratorsEqual(accel, remixHotkey),
-  });
-
-  const {
-    state: remixRecorderState,
-    liveModifiers: remixLiveModifiers,
-    capturedCombo: remixCapturedCombo,
-    canSaveRecording: remixCanSave,
-    needsModifierOrMouseButton: remixNeedsModifier,
-    blockedNotice: remixBlockedNotice,
-    startRecording: startRemixHotkeyRecording,
-    cancelRecording: cancelRemixHotkeyRecording,
-  } = useHotkeyRecorder(handleRemixHotkeyRecorded, {
-    target: "remix",
-    isBlocked: (accel) => acceleratorsEqual(accel, hotkey),
-  });
+  } = useHotkeyRecorder(handleHotkeyRecorded);
 
   const queryClient = useQueryClient();
 
@@ -441,8 +354,6 @@ export default function SettingsPage(): React.JSX.Element {
       setSelectedDevice(s[SETTINGS_KEYS.micDeviceId]);
     if (s[SETTINGS_KEYS.hotkey]) setHotkey(s[SETTINGS_KEYS.hotkey]);
     if (s[SETTINGS_KEYS.hotkeyMode] === "toggle") setHotkeyMode("toggle");
-    if (s[SETTINGS_KEYS.remixHotkey])
-      setRemixHotkey(s[SETTINGS_KEYS.remixHotkey]);
     setLanguages(parseLanguagesSetting(s));
     if (s[SETTINGS_KEYS.translateMode] === "true") setTranslateMode(true);
     if (s[SETTINGS_KEYS.outputMode]) setOutputMode(s[SETTINGS_KEYS.outputMode]);
@@ -636,67 +547,6 @@ export default function SettingsPage(): React.JSX.Element {
     void queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
   }, [t, queryClient]);
 
-  const clearConversations = useCallback(async () => {
-    if (
-      !window.confirm("Delete every Remix conversation? This can't be undone.")
-    )
-      return;
-    const response = await apiFetch("/api/agent/thread/clear", {
-      method: "POST",
-    });
-    if (!response.ok) throw new Error("Could not clear conversations.");
-    await invalidateThreads(queryClient);
-    startNewThread();
-  }, [queryClient, startNewThread]);
-
-  const clearBrain = useCallback(async () => {
-    if (
-      !window.confirm(
-        "Erase every Brain file — memories, notes, and tasks? Export a copy first if you need one. This can't be undone.",
-      )
-    )
-      return;
-    const response = await apiFetch("/api/brain/clear", { method: "POST" });
-    const result = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-    } | null;
-    if (!response.ok || !result?.ok) throw new Error("Could not clear Brain.");
-    resetBrainCache();
-    await queryClient.invalidateQueries({ queryKey: queryKeys.brain.all });
-  }, [queryClient]);
-
-  const exportBrain = useCallback(async () => {
-    const response = await apiFetch("/api/brain/export");
-    const result = (await response.json()) as {
-      ok?: boolean;
-      files?: Array<{ path: string; content: string }>;
-    };
-    if (!response.ok || !result.ok || !result.files)
-      throw new Error("Could not export Brain.");
-    const blob = new Blob([JSON.stringify(result.files, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const download = document.createElement("a");
-    download.href = url;
-    download.download = "freestyle-brain.json";
-    download.click();
-    URL.revokeObjectURL(url);
-  }, []);
-
-  const openNotificationThread = useCallback(
-    (threadId: string) => {
-      void getThread(threadId)
-        .then((thread) => {
-          if (!thread) return;
-          switchThread(thread);
-          navigate("/remix");
-        })
-        .catch(() => {});
-    },
-    [navigate, switchThread],
-  );
-
   const handleSoundToggle = useCallback((enabled: boolean) => {
     setSoundEnabled(enabled);
     getClient()
@@ -779,25 +629,13 @@ export default function SettingsPage(): React.JSX.Element {
   // Build display keys for current recorder state
   const liveKeys = liveModifiers.map(keyDisplayLabel);
   const draftKeys = capturedCombo ? comboDisplayKeys(capturedCombo) : liveKeys;
-  const remixLiveKeys = remixLiveModifiers.map(keyDisplayLabel);
-  const remixDraftKeys = remixCapturedCombo
-    ? comboDisplayKeys(remixCapturedCombo)
-    : remixLiveKeys;
-  const remixCaptureHint = remixNeedsModifier
-    ? "Add a modifier or side mouse button · Esc to cancel"
-    : remixCanSave
-      ? "Release to save · Esc to cancel"
-      : "Press a modifier or side mouse button... · Esc to cancel";
   const captureHint = needsModifierOrMouseButton
     ? "Add a modifier or side mouse button · Esc to cancel"
     : canSaveRecording
       ? "Release to save · Esc to cancel"
       : "Press a modifier or side mouse button... · Esc to cancel";
 
-  const activeSectionLabel =
-    activeSection === "mcp"
-      ? "MCP connections"
-      : t(`settings.sections.${activeSection}`);
+  const activeSectionLabel = t(`settings.sections.${activeSection}`);
 
   const positionOptions = useMemo<SegmentOption[]>(() => {
     const opts: SegmentOption[] = [
@@ -1095,71 +933,6 @@ export default function SettingsPage(): React.JSX.Element {
               </SettingsPanel>
             )}
 
-            {activeSection === "remix" && (
-              <SettingsPanel>
-                <Row
-                  label={t("settings.remix.hotkey")}
-                  desc={
-                    remixHotkey === hotkey
-                      ? t("settings.remix.conflict")
-                      : t("settings.remix.hotkeyDesc")
-                  }
-                >
-                  {remixRecorderState === "idle" ? (
-                    <div className="relative inline-flex">
-                      <Button
-                        variant="outline"
-                        onClick={startRemixHotkeyRecording}
-                        className="h-auto max-w-full flex-wrap gap-3 px-3.5 py-2"
-                      >
-                        <Keyboard className="text-muted-foreground size-4 shrink-0" />
-                        <KeyComboDisplay
-                          keys={formatAcceleratorKeys(remixHotkey)}
-                        />
-                        <span className="text-muted-foreground ml-1 text-xs">
-                          {t("common.change")}
-                        </span>
-                      </Button>
-                      {remixBlockedNotice && (
-                        <div className="bg-popover text-popover-foreground border-border shadow-soft absolute top-[calc(100%+6px)] right-0 z-20 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs">
-                          {t("settings.remix.conflict")}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="border-primary/60 bg-primary/5 relative inline-flex max-w-full flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2">
-                      <Keyboard className="text-primary h-4 w-4 shrink-0" />
-                      {remixDraftKeys.length > 0 ? (
-                        <>
-                          <KeyComboDisplay
-                            keys={remixDraftKeys}
-                            variant="dim"
-                          />
-                          <span className="text-muted-foreground text-xs">
-                            {remixCaptureHint}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground animate-pulse text-sm">
-                          {remixCaptureHint}
-                        </span>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={cancelRemixHotkeyRecording}
-                        className="ml-1"
-                      >
-                        {t("common.cancel")}
-                      </Button>
-                    </div>
-                  )}
-                </Row>
-              </SettingsPanel>
-            )}
-
-            {activeSection === "mcp" && <McpConnections />}
-
             {activeSection === "display" && (
               <SettingsPanel>
                 <Row
@@ -1327,60 +1100,6 @@ export default function SettingsPage(): React.JSX.Element {
                   </Button>
                 </Row>
                 <Row
-                  label="Remix conversations"
-                  desc="Delete every Remix conversation from this device and start a new one."
-                >
-                  <AsyncActionButton
-                    variant="destructive"
-                    label="Clear conversations"
-                    action={clearConversations}
-                  />
-                </Row>
-                <Row
-                  label="Confirm before deleting sessions"
-                  desc="Ask before permanently deleting a Remix conversation. This preference stays on this device."
-                >
-                  <Switch
-                    checked={!skipSessionDeletionConfirmation}
-                    onCheckedChange={(confirm) => {
-                      setDeletionConfirmationSkipped("session", !confirm);
-                      setSkipSessionDeletionConfirmation(!confirm);
-                    }}
-                  />
-                </Row>
-                <Row
-                  label="Confirm before deleting schedules"
-                  desc="Ask before permanently deleting a scheduled task. This preference stays on this device."
-                >
-                  <Switch
-                    checked={!skipScheduleDeletionConfirmation}
-                    onCheckedChange={(confirm) => {
-                      setDeletionConfirmationSkipped("schedule", !confirm);
-                      setSkipScheduleDeletionConfirmation(!confirm);
-                    }}
-                  />
-                </Row>
-                <Row
-                  label="Export Brain"
-                  desc="Download a JSON copy of your memories, notes, tasks, and files."
-                >
-                  <AsyncActionButton
-                    variant="outline"
-                    label="Download export"
-                    action={exportBrain}
-                  />
-                </Row>
-                <Row
-                  label="Reset Brain"
-                  desc="Permanently delete every memory, note, task, and file in Brain."
-                >
-                  <AsyncActionButton
-                    variant="destructive"
-                    label="Clear Brain"
-                    action={clearBrain}
-                  />
-                </Row>
-                <Row
                   label={t("settings.data.logs")}
                   desc={t("settings.data.logsDesc")}
                   last
@@ -1398,32 +1117,6 @@ export default function SettingsPage(): React.JSX.Element {
                 </Row>
               </SettingsPanel>
             )}
-
-            {activeSection === "notifications" && (
-              <SettingsPanel>
-                <p className="text-muted-foreground border-border border-b pb-5 text-[13px] leading-[1.6]">
-                  Updates from scheduled work and completed Remix runs. Select
-                  one to reopen its conversation.
-                </p>
-                <div className="pt-5">
-                  <NotificationsHistory onOpenThread={openNotificationThread} />
-                </div>
-              </SettingsPanel>
-            )}
-
-            {activeSection === "connectedApps" && (
-              <SettingsPanel>
-                <p className="text-muted-foreground border-border border-b pb-5 text-[13px] leading-[1.6]">
-                  Connect the apps Freestyle can use when a Remix task needs
-                  them. Remix will ask before it uses a connected app.
-                </p>
-                <div className="settings-connected-apps pt-5">
-                  <ConnectedApps />
-                </div>
-              </SettingsPanel>
-            )}
-
-            {activeSection === "billing" && <BillingPanel />}
 
             {activeSection === "network" && <NetworkPanel />}
           </div>
@@ -1474,168 +1167,6 @@ function Row({
   );
 }
 
-function BillingPanel(): React.JSX.Element {
-  const { user } = useCloudAuth();
-  const {
-    balance,
-    isPro,
-    isFetching,
-    refresh,
-    startCheckout,
-    checkoutStatus,
-    checkoutError,
-    resetCheckout,
-    openBillingPortal,
-    portalOpening,
-  } = useCloudUsage(!!user);
-
-  return (
-    <SettingsPanel>
-      <div className="flex flex-col gap-6 pb-24">
-        {!isPro && (
-          <UsageSummary
-            signedIn={!!user}
-            balance={balance}
-            isFetching={isFetching}
-            onRefresh={refresh}
-          />
-        )}
-        {isPro ? (
-          <ProMembership
-            openBillingPortal={openBillingPortal}
-            portalOpening={portalOpening}
-          />
-        ) : user && !balance && isFetching ? (
-          <div className="glass-card flex items-center gap-2.5 rounded-[12px] border px-4 py-4 text-muted-foreground text-[12px]">
-            <Loader2 className="size-4 animate-spin" />
-            Checking your membership…
-          </div>
-        ) : (
-          <PricingPlans
-            isPro={false}
-            checkoutStatus={checkoutStatus}
-            checkoutError={checkoutError}
-            startCheckout={startCheckout}
-            resetCheckout={resetCheckout}
-            openBillingPortal={openBillingPortal}
-            portalOpening={portalOpening}
-          />
-        )}
-      </div>
-    </SettingsPanel>
-  );
-}
-
-function UsageSummary({
-  signedIn,
-  balance,
-  isFetching,
-  onRefresh,
-}: {
-  signedIn: boolean;
-  balance: CloudUsageBalance | null;
-  isFetching: boolean;
-  onRefresh: () => void;
-}): React.JSX.Element {
-  if (!signedIn) {
-    return (
-      <div className="glass-card flex items-start gap-3 rounded-[12px] border p-4">
-        <Cloud className="text-primary mt-0.5 size-5 shrink-0" />
-        <div className="min-w-0">
-          <div className="text-foreground text-[13px] font-medium">
-            Sign in to Freestyle Cloud
-          </div>
-          <p className="text-muted-foreground mt-0.5 text-[12px] leading-[1.5]">
-            Sign in from the account menu in the bottom-left to track your
-            weekly usage and manage your plan.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="glass-card rounded-[12px] border p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-muted-foreground mono text-[10.5px] font-medium uppercase tracking-[0.12em]">
-          This week
-        </span>
-        <button
-          type="button"
-          onClick={onRefresh}
-          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[11px] transition-colors"
-        >
-          <RefreshCw className={cn("size-3", isFetching && "animate-spin")} />
-          Refresh
-        </button>
-      </div>
-
-      {balance ? (
-        <UsageSummaryBalance balance={balance} />
-      ) : (
-        <div className="text-muted-foreground mt-3 text-[12px]">
-          Usage is unavailable right now.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function UsageSummaryBalance({
-  balance,
-}: {
-  balance: CloudUsageBalance;
-}): React.JSX.Element {
-  if (balance.unlimited) {
-    return (
-      <p className="text-muted-foreground mt-3 text-[12px]">
-        Unlimited dictation and Remix use.
-      </p>
-    );
-  }
-  const dictation = balance.dictation;
-  const remix = balance.remix ?? balance;
-  const primary = dictation ?? remix;
-  const primaryLabel = dictation ? "dictation words" : "Remix turns";
-
-  return (
-    <>
-      <div className="mt-3 mb-3 flex items-baseline gap-1.5">
-        <span className="serif-italic text-foreground text-[34px] leading-none">
-          {formatNumber(primary.remaining)}
-        </span>
-        <span className="text-muted-foreground text-[11px] font-medium">
-          / {formatNumber(primary.limit)} {primaryLabel} remaining
-        </span>
-      </div>
-      <Progress value={usagePercent(primary)} className="h-1.5" />
-      <div className="text-muted-foreground mt-2.5 flex items-center justify-between text-[10.5px]">
-        <span className="mono tracking-[0.08em]">
-          {usagePercent(primary)}% used
-        </span>
-        <span>
-          Resets{" "}
-          {new Date(primary.resetsAt).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          })}
-        </span>
-      </div>
-      {dictation && (
-        <p className="text-muted-foreground mt-3 text-[11px]">
-          {formatNumber(remix.remaining)} / {formatNumber(remix.limit)} Remix
-          turns remaining
-        </p>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Network — enterprise proxy / custom CA configuration
-// ---------------------------------------------------------------------------
-
-/** Load a single string setting from the server ("" when unset/unreachable). */
 function NetworkPanel(): React.JSX.Element {
   const { t } = useTranslation();
   // Single source of truth: the same zod schema the server enforces per-key,
