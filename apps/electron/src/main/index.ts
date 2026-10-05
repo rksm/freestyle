@@ -119,6 +119,7 @@ import { registerAgentFileIpc } from "./agent-files";
 import { AudioPlaybackController } from "./audio-control/controller";
 import { recoverDuckedVolumeFromCrash } from "./audio-control/volume-ducker";
 import { CourierNativeNotificationPresenter } from "./courier-native-notifications";
+import { queryFocusBridge } from "./focus-bridge";
 import { HotkeyRecorder } from "./hotkey-recorder";
 import {
   shouldRetryMacNativeListener,
@@ -1102,12 +1103,32 @@ async function getWindowsOpenAppCandidates(): Promise<OpenAppCandidate[]> {
 async function getLinuxFrontmostApp(): Promise<string | null> {
   if (isWaylandSession()) {
     return (
+      (await getFocusBridgeFrontmostApp()) ??
       (await getSwayFrontmostApp()) ??
       (await getGnomeFrontmostApp()) ??
       (await getLinuxX11FrontmostApp())
     );
   }
   return getLinuxX11FrontmostApp();
+}
+
+/**
+ * Focused window via the FocusBridge extension, mapped to the app-context
+ * shape the other probes return. See ./focus-bridge.ts for the query itself.
+ */
+async function getFocusBridgeFrontmostApp(): Promise<string | null> {
+  const focused = await queryFocusBridge();
+  if (!focused) return null;
+
+  const app =
+    focused.wmClass ?? focused.app ?? focused.appId ?? focused.name ?? null;
+  const windowTitle = focused.title ?? null;
+  if (!app && !windowTitle) return null;
+
+  return JSON.stringify({
+    app: app ?? "Unknown",
+    windowTitle: windowTitle ?? "",
+  });
 }
 
 async function getSwayFrontmostApp(): Promise<string | null> {
@@ -1280,7 +1301,12 @@ async function deliverOutput(
       forwardDictation("final", text);
     } else if (mode === OutputMode.Paste) {
       await yieldFocusToUserApp();
-      await pasteIntoFocusedApp(text);
+      // Wayland cannot keep the pill from taking keyboard focus, so it must
+      // be gone before delivery asks which app is focused.
+      await pasteIntoFocusedApp(
+        text,
+        isWaylandSession() ? hidePill : undefined,
+      );
     } else {
       clipboard.writeText(text);
     }
