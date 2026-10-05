@@ -57,7 +57,8 @@ eval-context *ARGS:
 install: release sync-gnome-extension sync-desktop-context-plugin
     #!/usr/bin/env sh
     set -e
-    appimage=$(ls apps/electron/dist/Freestyle-*.AppImage 2>/dev/null | head -1)
+    # Newest first: dist keeps AppImages of earlier versions.
+    appimage=$(ls -t apps/electron/dist/Freestyle-*.AppImage 2>/dev/null | head -1)
     if [ -z "$appimage" ]; then
         echo "No AppImage in apps/electron/dist - run 'just release' first" >&2
         exit 1
