@@ -264,6 +264,23 @@
       "logsDesc": "App logs are saved to a file on your device. Open the folder to share them when reporting a problem.",
       "openLogs": "Open logs folder"
     },
+    "context": {
+      "title": "Context",
+      "capture": "Context capture",
+      "captureDesc": "Capture nearby desktop context for each dictation.",
+      "toAsr": "Use context for recognition",
+      "toAsrDesc": "Use captured terms to improve speech recognition.",
+      "toCleanup": "Use context for cleanup",
+      "toCleanupDesc": "Use captured context to preserve exact spellings during cleanup.",
+      "sourceWindow": "Window details",
+      "sourceWindowDesc": "Focused application name, window title, and window class.",
+      "sourceTerminal": "Terminal text",
+      "sourceTerminalDesc": "Recent output from the focused WezTerm pane.",
+      "sourceEditor": "Editor content",
+      "sourceEditorDesc": "File, language, and visible text from the focused Emacs buffer.",
+      "sourceAccessibility": "On-screen text",
+      "sourceAccessibilityDesc": "Visible text from the focused document, read through accessibility APIs."
+    },
     "network": {
       "intro": "For managed or corporate networks. Route model downloads and cloud requests through a proxy, and trust a custom certificate authority. Leave blank to use your system defaults or standard proxy environment variables.",
       "proxy": "Proxy URL",

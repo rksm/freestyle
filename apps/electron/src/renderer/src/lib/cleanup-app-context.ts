@@ -45,7 +45,7 @@ export function applyNeedsAppContextForCleanup(
         settings[SETTINGS_KEYS.cleanupOverallTone],
       ),
     });
-  const contextEnabled = settings.context_enabled !== "false";
+  const contextEnabled = settings[SETTINGS_KEYS.contextEnabled] !== "false";
 
   cachedNeedsAppContext = contextEnabled || cleanupNeedsAppContext;
   return cachedNeedsAppContext;

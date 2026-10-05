@@ -350,6 +350,20 @@ export default function SettingsPage(): React.JSX.Element {
   // All persisted settings in one request (replaces ~10 individual GETs).
   const settingsQuery = useQuery(settingsQueryOptions());
 
+  // Context toggles read straight from the settings cache, which `persist`
+  // keeps current. Absent means enabled; only the string "false" disables.
+  const contextOn = (key: string) => settingsQuery.data?.[key] !== "false";
+
+  const handleContextEnabledToggle = useCallback(
+    (enabled: boolean) => {
+      putSetting(queryClient, SETTINGS_KEYS.contextEnabled, String(enabled))
+        // Tell the pill to re-derive whether it captures the target app.
+        .then(() => window.api?.sendCleanupContextChanged?.())
+        .catch(() => {});
+    },
+    [queryClient],
+  );
+
   // Seed local form state from the batch once it first resolves. Handlers
   // persist changes directly, so we only seed once (guarded) to avoid
   // clobbering edits if the query is later invalidated.
@@ -638,6 +652,30 @@ export default function SettingsPage(): React.JSX.Element {
     [t],
   );
 
+  // Per-source toggles. The sources are collected by the desktop-context
+  // plugin, which only runs on Linux and reads these as global settings.
+  const contextRows = [
+    {
+      key: SETTINGS_KEYS.contextToAsr,
+      label: t("settings.context.toAsr"),
+      desc: t("settings.context.toAsrDesc"),
+    },
+    {
+      key: SETTINGS_KEYS.contextToCleanup,
+      label: t("settings.context.toCleanup"),
+      desc: t("settings.context.toCleanupDesc"),
+    },
+    ...(isLinux
+      ? (["Window", "Terminal", "Editor", "Accessibility"] as const).map(
+          (source) => ({
+            key: SETTINGS_KEYS[`contextSource${source}`],
+            label: t(`settings.context.source${source}`),
+            desc: t(`settings.context.source${source}Desc`),
+          }),
+        )
+      : []),
+  ];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DragSpacer />
@@ -692,223 +730,259 @@ export default function SettingsPage(): React.JSX.Element {
             )}
 
             {activeSection === "recording" && (
-              <SettingsPanel>
-                <Row
-                  label={t("settings.recording.hotkey")}
-                  desc={
-                    hotkeyMode === "toggle"
-                      ? t("settings.recording.hotkeyDescToggle")
-                      : t("settings.recording.hotkeyDescHold")
-                  }
-                >
-                  {recorderState === "idle" ? (
-                    <div className="relative inline-flex">
-                      <Button
-                        variant="outline"
-                        onClick={startHotkeyRecording}
-                        className="h-auto max-w-full flex-wrap gap-3 px-3.5 py-2"
-                      >
-                        <Keyboard className="text-muted-foreground size-4 shrink-0" />
-                        <KeyComboDisplay keys={formatAcceleratorKeys(hotkey)} />
-                        <span className="text-muted-foreground ml-1 text-xs">
-                          {t("common.change")}
-                        </span>
-                      </Button>
-                      {(invalidReleaseNotice || blockedNotice) && (
-                        <div className="bg-popover text-popover-foreground border-border shadow-soft absolute top-[calc(100%+6px)] right-0 z-20 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs">
-                          {blockedNotice
-                            ? t("settings.recording.conflict")
-                            : t("settings.recording.needsModifier")}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="border-primary/60 bg-primary/5 relative inline-flex max-w-full flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2">
-                      <Keyboard className="text-primary h-4 w-4 shrink-0" />
-                      {draftKeys.length > 0 ? (
-                        <>
-                          <KeyComboDisplay keys={draftKeys} variant="dim" />
-                          <span className="text-muted-foreground text-xs">
-                            {captureHint}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground animate-pulse text-sm">
-                          {captureHint}
-                        </span>
-                      )}
-                      {invalidReleaseNotice && (
-                        <div className="bg-popover text-popover-foreground border-border shadow-soft absolute top-[calc(100%+6px)] right-0 z-20 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs">
-                          {t("settings.recording.needsModifier")}
-                        </div>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={cancelHotkeyRecording}
-                        className="ml-1"
-                      >
-                        {t("common.cancel")}
-                      </Button>
-                    </div>
-                  )}
-                </Row>
-
-                <Row
-                  label={t("settings.recording.activation")}
-                  desc={
-                    hotkeyMode === "toggle"
-                      ? t("settings.recording.activationDescToggle")
-                      : t("settings.recording.activationDescHold")
-                  }
-                >
-                  <SegmentedControl
-                    value={hotkeyMode}
-                    onValueChange={(v) =>
-                      handleHotkeyModeChange(v as "hold" | "toggle")
-                    }
-                    options={[
-                      {
-                        value: "hold",
-                        label: t("settings.recording.activationHold"),
-                      },
-                      {
-                        value: "toggle",
-                        label: t("settings.recording.activationToggle"),
-                      },
-                    ]}
-                  />
-                </Row>
-
-                <Row
-                  label={t("settings.recording.microphone")}
-                  desc={t("settings.recording.microphoneDesc")}
-                >
-                  <Select
-                    value={
-                      selectedDevice === ""
-                        ? SYSTEM_DEFAULT_MIC
-                        : selectedDevice
-                    }
-                    onValueChange={(v) =>
-                      handleDeviceChange(v === SYSTEM_DEFAULT_MIC ? "" : v)
+              <>
+                <SettingsPanel>
+                  <Row
+                    label={t("settings.recording.hotkey")}
+                    desc={
+                      hotkeyMode === "toggle"
+                        ? t("settings.recording.hotkeyDescToggle")
+                        : t("settings.recording.hotkeyDescHold")
                     }
                   >
-                    <SelectTrigger
-                      id="settings-microphone"
-                      className="w-full max-w-md"
-                    >
-                      <Mic className="text-muted-foreground size-4 shrink-0" />
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {microphoneOptions.map((o) => (
-                        <SelectItem
-                          key={o.value}
-                          value={o.value === "" ? SYSTEM_DEFAULT_MIC : o.value}
+                    {recorderState === "idle" ? (
+                      <div className="relative inline-flex">
+                        <Button
+                          variant="outline"
+                          onClick={startHotkeyRecording}
+                          className="h-auto max-w-full flex-wrap gap-3 px-3.5 py-2"
                         >
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Row>
-
-                <Row
-                  label={t("settings.recording.language")}
-                  desc={
-                    languages.length === 0
-                      ? t("settings.recording.languageDescAuto")
-                      : languages.length > 1
-                        ? t("settings.recording.languageDescMulti")
-                        : translateMode
-                          ? t("settings.recording.languageDescEnforced", {
-                              language: languageLabel,
-                            })
-                          : t("settings.recording.languageDescHint", {
-                              language: languageLabel,
-                            })
-                  }
-                >
-                  <LanguageMultiSelect
-                    id="settings-language"
-                    values={languages}
-                    onChange={handleLanguagesChange}
-                    options={languageOptions}
-                    className="w-full max-w-md"
-                  />
-                </Row>
-
-                <Row
-                  label={t("settings.recording.translateMode")}
-                  desc={t("settings.recording.translateModeDesc")}
-                >
-                  <Switch
-                    id="settings-translate-mode"
-                    checked={translateMode && languages.length === 1}
-                    disabled={languages.length !== 1}
-                    onCheckedChange={persistTranslateMode}
-                  />
-                </Row>
-
-                <Row
-                  label={t("settings.recording.outputMode")}
-                  desc={t("settings.recording.outputModeDesc")}
-                >
-                  <Segment
-                    compact
-                    options={[
-                      {
-                        id: "paste",
-                        label: t("settings.recording.outputModePaste"),
-                      },
-                      {
-                        id: "clipboard",
-                        label: t("settings.recording.outputModeClipboard"),
-                      },
-                    ]}
-                    active={outputMode}
-                    onSelect={handleOutputModeChange}
-                  />
-                </Row>
-
-                <Row
-                  last={!supportsBackgroundAudio}
-                  label={t("settings.recording.sound")}
-                  desc={t("settings.recording.soundDesc")}
-                >
-                  <div className="flex items-center gap-2.5">
-                    {soundEnabled ? (
-                      <Volume2 className="text-muted-foreground h-4 w-4 shrink-0" />
+                          <Keyboard className="text-muted-foreground size-4 shrink-0" />
+                          <KeyComboDisplay
+                            keys={formatAcceleratorKeys(hotkey)}
+                          />
+                          <span className="text-muted-foreground ml-1 text-xs">
+                            {t("common.change")}
+                          </span>
+                        </Button>
+                        {(invalidReleaseNotice || blockedNotice) && (
+                          <div className="bg-popover text-popover-foreground border-border shadow-soft absolute top-[calc(100%+6px)] right-0 z-20 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs">
+                            {blockedNotice
+                              ? t("settings.recording.conflict")
+                              : t("settings.recording.needsModifier")}
+                          </div>
+                        )}
+                      </div>
                     ) : (
-                      <VolumeOff className="text-muted-foreground h-4 w-4 shrink-0" />
+                      <div className="border-primary/60 bg-primary/5 relative inline-flex max-w-full flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2">
+                        <Keyboard className="text-primary h-4 w-4 shrink-0" />
+                        {draftKeys.length > 0 ? (
+                          <>
+                            <KeyComboDisplay keys={draftKeys} variant="dim" />
+                            <span className="text-muted-foreground text-xs">
+                              {captureHint}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground animate-pulse text-sm">
+                            {captureHint}
+                          </span>
+                        )}
+                        {invalidReleaseNotice && (
+                          <div className="bg-popover text-popover-foreground border-border shadow-soft absolute top-[calc(100%+6px)] right-0 z-20 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs">
+                            {t("settings.recording.needsModifier")}
+                          </div>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={cancelHotkeyRecording}
+                          className="ml-1"
+                        >
+                          {t("common.cancel")}
+                        </Button>
+                      </div>
                     )}
-                    <Switch
-                      checked={soundEnabled}
-                      onCheckedChange={handleSoundToggle}
-                    />
-                  </div>
-                </Row>
+                  </Row>
 
-                {supportsBackgroundAudio ? (
                   <Row
-                    label="Background audio"
+                    label={t("settings.recording.activation")}
                     desc={
-                      isLinux
-                        ? "Duck lowers system volume. Pause pauses MPRIS media and lowers volume."
-                        : "Duck lowers volume. Pause pauses current media and lowers volume."
+                      hotkeyMode === "toggle"
+                        ? t("settings.recording.activationDescToggle")
+                        : t("settings.recording.activationDescHold")
                     }
-                    last
+                  >
+                    <SegmentedControl
+                      value={hotkeyMode}
+                      onValueChange={(v) =>
+                        handleHotkeyModeChange(v as "hold" | "toggle")
+                      }
+                      options={[
+                        {
+                          value: "hold",
+                          label: t("settings.recording.activationHold"),
+                        },
+                        {
+                          value: "toggle",
+                          label: t("settings.recording.activationToggle"),
+                        },
+                      ]}
+                    />
+                  </Row>
+
+                  <Row
+                    label={t("settings.recording.microphone")}
+                    desc={t("settings.recording.microphoneDesc")}
+                  >
+                    <Select
+                      value={
+                        selectedDevice === ""
+                          ? SYSTEM_DEFAULT_MIC
+                          : selectedDevice
+                      }
+                      onValueChange={(v) =>
+                        handleDeviceChange(v === SYSTEM_DEFAULT_MIC ? "" : v)
+                      }
+                    >
+                      <SelectTrigger
+                        id="settings-microphone"
+                        className="w-full max-w-md"
+                      >
+                        <Mic className="text-muted-foreground size-4 shrink-0" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {microphoneOptions.map((o) => (
+                          <SelectItem
+                            key={o.value}
+                            value={
+                              o.value === "" ? SYSTEM_DEFAULT_MIC : o.value
+                            }
+                          >
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Row>
+
+                  <Row
+                    label={t("settings.recording.language")}
+                    desc={
+                      languages.length === 0
+                        ? t("settings.recording.languageDescAuto")
+                        : languages.length > 1
+                          ? t("settings.recording.languageDescMulti")
+                          : translateMode
+                            ? t("settings.recording.languageDescEnforced", {
+                                language: languageLabel,
+                              })
+                            : t("settings.recording.languageDescHint", {
+                                language: languageLabel,
+                              })
+                    }
+                  >
+                    <LanguageMultiSelect
+                      id="settings-language"
+                      values={languages}
+                      onChange={handleLanguagesChange}
+                      options={languageOptions}
+                      className="w-full max-w-md"
+                    />
+                  </Row>
+
+                  <Row
+                    label={t("settings.recording.translateMode")}
+                    desc={t("settings.recording.translateModeDesc")}
+                  >
+                    <Switch
+                      id="settings-translate-mode"
+                      checked={translateMode && languages.length === 1}
+                      disabled={languages.length !== 1}
+                      onCheckedChange={persistTranslateMode}
+                    />
+                  </Row>
+
+                  <Row
+                    label={t("settings.recording.outputMode")}
+                    desc={t("settings.recording.outputModeDesc")}
                   >
                     <Segment
                       compact
-                      options={audioPlaybackOptions}
-                      active={audioPlaybackMode}
-                      onSelect={handleAudioPlaybackModeChange}
+                      options={[
+                        {
+                          id: "paste",
+                          label: t("settings.recording.outputModePaste"),
+                        },
+                        {
+                          id: "clipboard",
+                          label: t("settings.recording.outputModeClipboard"),
+                        },
+                      ]}
+                      active={outputMode}
+                      onSelect={handleOutputModeChange}
                     />
                   </Row>
-                ) : null}
-              </SettingsPanel>
+
+                  <Row
+                    last={!supportsBackgroundAudio}
+                    label={t("settings.recording.sound")}
+                    desc={t("settings.recording.soundDesc")}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      {soundEnabled ? (
+                        <Volume2 className="text-muted-foreground h-4 w-4 shrink-0" />
+                      ) : (
+                        <VolumeOff className="text-muted-foreground h-4 w-4 shrink-0" />
+                      )}
+                      <Switch
+                        checked={soundEnabled}
+                        onCheckedChange={handleSoundToggle}
+                      />
+                    </div>
+                  </Row>
+
+                  {supportsBackgroundAudio ? (
+                    <Row
+                      label="Background audio"
+                      desc={
+                        isLinux
+                          ? "Duck lowers system volume. Pause pauses MPRIS media and lowers volume."
+                          : "Duck lowers volume. Pause pauses current media and lowers volume."
+                      }
+                      last
+                    >
+                      <Segment
+                        compact
+                        options={audioPlaybackOptions}
+                        active={audioPlaybackMode}
+                        onSelect={handleAudioPlaybackModeChange}
+                      />
+                    </Row>
+                  ) : null}
+                </SettingsPanel>
+                <div className="mt-8">
+                  <h3 className="text-foreground mb-2 text-sm font-medium">
+                    {t("settings.context.title")}
+                  </h3>
+                  <SettingsPanel>
+                    <Row
+                      label={t("settings.context.capture")}
+                      desc={t("settings.context.captureDesc")}
+                    >
+                      <Switch
+                        checked={contextOn(SETTINGS_KEYS.contextEnabled)}
+                        onCheckedChange={handleContextEnabledToggle}
+                      />
+                    </Row>
+                    {contextRows.map((row, i) => (
+                      <Row
+                        key={row.key}
+                        label={row.label}
+                        desc={row.desc}
+                        last={i === contextRows.length - 1}
+                      >
+                        <Switch
+                          checked={contextOn(row.key)}
+                          disabled={!contextOn(SETTINGS_KEYS.contextEnabled)}
+                          onCheckedChange={(v) => persist(row.key, String(v))}
+                        />
+                      </Row>
+                    ))}
+                  </SettingsPanel>
+                </div>
+              </>
             )}
 
             {activeSection === "display" && (
