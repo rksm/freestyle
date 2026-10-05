@@ -16,9 +16,11 @@
               # provides the matching version on demand.
               pkgs.corepack
               pkgs.just
-              # compile:native builds the Linux paste/hotkey helpers with gcc;
-              # download-whisper-cpp.mjs builds whisper.cpp with cmake + make.
+              # compile:native builds the Linux paste/hotkey helpers with gcc.
               pkgs.gcc
+              # Nothing in the repo builds whisper.cpp any more; local Whisper
+              # finds whisper-cli/whisper-server on PATH (lib/whisper/binary.ts).
+              # cmake + make are only for building those by hand.
               pkgs.cmake
               pkgs.gnumake
               # electron-builder's downloaded fpm binary cannot run on NixOS;

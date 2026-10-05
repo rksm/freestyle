@@ -8,7 +8,16 @@
     "enumMembers": "off",
     "namespaceMembers": "off"
   },
-  "ignoreBinaries": ["pkg-config", "powershell.exe", "python3"],
+  "ignoreBinaries": [
+    "emacsclient",
+    "gcc",
+    "gdbus",
+    "pkg-config",
+    "powershell.exe",
+    "python3",
+    "wl-copy",
+    "wl-paste"
+  ],
   "ignoreFiles": [
     "apps/electron/src/preload/*.d.ts",
     "apps/electron/src/renderer/src/env.d.ts",
