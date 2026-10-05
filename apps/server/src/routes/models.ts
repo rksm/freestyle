@@ -189,6 +189,30 @@ const BUILTIN_VOICE_MODELS: AvailableModel[] = [
     family: "soniox",
     type: "voice",
   },
+  {
+    provider_id: "assemblyai",
+    provider_name: "AssemblyAI",
+    model_id: "assemblyai/universal-3-6-pro",
+    model_name: "AssemblyAI Universal-3.6 Pro",
+    family: "assemblyai",
+    type: "voice",
+  },
+  {
+    provider_id: "assemblyai",
+    provider_name: "AssemblyAI",
+    model_id: "assemblyai/universal-streaming-english",
+    model_name: "AssemblyAI Universal-Streaming English",
+    family: "assemblyai",
+    type: "voice",
+  },
+  {
+    provider_id: "assemblyai",
+    provider_name: "AssemblyAI",
+    model_id: "assemblyai/universal-streaming-multilingual",
+    model_name: "AssemblyAI Universal-Streaming Multilingual",
+    family: "assemblyai",
+    type: "voice",
+  },
 ];
 
 // OpenAI-compatible LLM gateways (aggregators fronting many vendors' models).
