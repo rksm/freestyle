@@ -818,6 +818,12 @@ export interface PasteOptions {
    * space added per run would accumulate on every re-run.
    */
   trailingSpace?: boolean;
+  /**
+   * Aborted when the user cancels the dictation. Delivery then stops at its
+   * next checkpoint with an AbortError, and the clipboard it borrowed is put
+   * back.
+   */
+  signal?: AbortSignal;
 }
 
 export function pasteIntoFocusedApp(
@@ -840,6 +846,9 @@ async function doPasteIntoFocusedApp(
   beforePaste?: () => Promise<void> | void,
   options?: PasteOptions,
 ): Promise<void> {
+  const signal = options?.signal;
+  signal?.throwIfAborted();
+
   // Never log the transcript itself (it's persisted to the shared log file);
   // length is enough to diagnose paste issues.
   log.debug(`pasting ${text?.length ?? 0} chars`);
@@ -851,10 +860,12 @@ async function doPasteIntoFocusedApp(
   // which app is focused, and on GNOME the visible pill holds keyboard focus
   // — any earlier query reports Freestyle itself.
   await beforePaste?.();
+  signal?.throwIfAborted();
 
   const wayland = process.platform === "linux" && isWaylandSession();
   if (wayland) {
     await waitForFocusToLeavePill();
+    signal?.throwIfAborted();
     // Apps we can insert into programmatically skip the clipboard and the
     // synthetic keystroke entirely.
     if (await tryEmacsInsert(text)) {
@@ -870,6 +881,8 @@ async function doPasteIntoFocusedApp(
 
   let pasted = false;
   try {
+    // The clipboard writes above awaited; cancellation may have won meanwhile.
+    signal?.throwIfAborted();
     let method: PasteMethod = "legacy";
     switch (process.platform) {
       case "darwin":
@@ -893,7 +906,8 @@ async function doPasteIntoFocusedApp(
   } finally {
     // When every paste backend failed, the clipboard is the only copy of the
     // transcript the user still has — leave it there instead of restoring.
-    if (pasted) {
+    // A cancelled dictation is the exception: the user discarded the text.
+    if (pasted || signal?.aborted) {
       if (viaWayland) {
         await restoreWaylandClipboard(waylandPrior, text);
       } else {

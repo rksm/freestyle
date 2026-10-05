@@ -521,6 +521,9 @@ let keyListener: NativeKeyListener | null = null;
 let accessibilityConfirmed = false;
 let hotkeyPressed = false;
 let dictationInProgress = false;
+// One per pill session; Escape aborts it so a delivery that already started
+// stops too. deliverOutput reads it when a delivery begins.
+let pillOutputAbort = new AbortController();
 // A normal dictation begun in the focused Remix composer must return there.
 // Native paste deliberately blurs Freestyle first, which is correct for every
 // external app but cannot work for this in-app target.
@@ -1112,6 +1115,17 @@ async function getLinuxFrontmostApp(): Promise<string | null> {
   return getLinuxX11FrontmostApp();
 }
 
+async function getFrontmostApp(): Promise<string | null> {
+  try {
+    if (process.platform === "darwin") return await getMacFrontmostApp();
+    if (process.platform === "win32") return await getWindowsFrontmostApp();
+    if (process.platform === "linux") return await getLinuxFrontmostApp();
+  } catch {
+    // App context is best-effort and must never prevent dictation.
+  }
+  return null;
+}
+
 /**
  * Focused window via the FocusBridge extension, mapped to the app-context
  * shape the other probes return. See ./focus-bridge.ts for the query itself.
@@ -1280,6 +1294,9 @@ async function deliverOutput(
   text: string,
   mode: typeof OutputMode.Paste | typeof OutputMode.Clipboard,
 ): Promise<void> {
+  const { signal } = pillOutputAbort;
+  if (signal.aborted) return;
+
   if (!text.trim()) {
     relayServerEvent({
       type: FreestyleEventType.OutputDelivered,
@@ -1306,11 +1323,13 @@ async function deliverOutput(
       await pasteIntoFocusedApp(
         text,
         isWaylandSession() ? hidePill : undefined,
+        { signal },
       );
     } else {
       clipboard.writeText(text);
     }
   } catch (err) {
+    if (signal.aborted) return;
     // pasteIntoFocusedApp left the transcript on the clipboard — tell the user
     // instead of letting the dictation silently vanish.
     notifyPasteFailed();
@@ -2593,22 +2612,7 @@ app.whenReady().then(async () => {
   );
 
   // -- Context-aware dictation: get frontmost app + browser context --
-  ipcMain.handle("system:frontmost-app", async () => {
-    try {
-      if (process.platform === "darwin") {
-        return await getMacFrontmostApp();
-      }
-      if (process.platform === "win32") {
-        return await getWindowsFrontmostApp();
-      }
-      if (process.platform === "linux") {
-        return await getLinuxFrontmostApp();
-      }
-    } catch {
-      // graceful fallback
-    }
-    return null;
-  });
+  ipcMain.handle("system:frontmost-app", getFrontmostApp);
 
   ipcMain.handle("system:open-app-candidates", async () => {
     try {
@@ -3032,10 +3036,7 @@ interface FrontmostContext {
 
 async function getFrontmostContext(): Promise<FrontmostContext> {
   try {
-    let raw: string | null = null;
-    if (process.platform === "darwin") raw = await getMacFrontmostApp();
-    else if (process.platform === "win32") raw = await getWindowsFrontmostApp();
-    else if (process.platform === "linux") raw = await getLinuxFrontmostApp();
+    const raw = await getFrontmostApp();
     if (!raw) return { appName: null, windowTitle: null, url: null };
     try {
       const parsed = JSON.parse(raw) as {
@@ -4035,11 +4036,28 @@ function cancelActivePill(): void {
     hotkeyPressed = false;
     clearHotkeyStuckWatchdog();
     dictationDeliveryTarget = null;
+    pillOutputAbort.abort();
   }
   // The legacy pill listens on `pill:cancel`; the newer surfaces retain the
   // generic dictation event. Remix consumes only the shared pill event.
   mainWindow?.webContents.send("pill:cancel");
   if (dictationInProgress) mainWindow?.webContents.send("dictation:cancel");
+}
+
+// On GNOME Wayland the pill can take focus despite focusable:false, so the
+// destination app is read before the pill shows. A slow probe must not delay
+// the pill noticeably; it falls back to no context.
+const PRE_PILL_CONTEXT_TIMEOUT_MS = 250;
+// Capturing context makes hotkey:down async. Down and up share this chain so
+// the renderer still sees down before up.
+let hotkeyIpcChain: Promise<void> = Promise.resolve();
+
+function enqueueHotkeyIpc(send: () => Promise<void> | void): void {
+  hotkeyIpcChain = hotkeyIpcChain.then(send).catch((err) => {
+    hotkeyLog.warn(
+      `Hotkey IPC failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 }
 
 function sendHotkeyDown(): void {
@@ -4052,18 +4070,30 @@ function sendHotkeyDown(): void {
   }
   dictationDeliveryTarget =
     panelComposerFocused && panelWindow?.isFocused() ? "panel-composer" : null;
-  showPill();
-  anchorPillForHotkey();
-  relayServerEvent({ type: FreestyleEventType.RecordingStarted });
-  for (const win of dictationTargets()) {
-    win.webContents.send("hotkey:down");
-  }
+  enqueueHotkeyIpc(async () => {
+    const appContext = await Promise.race([
+      getFrontmostApp(),
+      wait(PRE_PILL_CONTEXT_TIMEOUT_MS).then(() => null),
+    ]);
+    // A press while the pill is still up (a re-record) continues its session.
+    if (!mainWindow?.isVisible() || pillOutputAbort.signal.aborted) {
+      pillOutputAbort = new AbortController();
+    }
+    showPill();
+    anchorPillForHotkey();
+    relayServerEvent({ type: FreestyleEventType.RecordingStarted });
+    for (const win of dictationTargets()) {
+      win.webContents.send("hotkey:down", appContext);
+    }
+  });
 }
 
 function sendHotkeyUp(): void {
-  for (const win of dictationTargets()) {
-    win.webContents.send("hotkey:up");
-  }
+  enqueueHotkeyIpc(() => {
+    for (const win of dictationTargets()) {
+      win.webContents.send("hotkey:up");
+    }
+  });
 }
 
 let remixStuckTimer: NodeJS.Timeout | null = null;

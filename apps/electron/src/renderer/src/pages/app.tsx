@@ -672,6 +672,10 @@ export default function AppPage(): React.JSX.Element {
   /** True only while state is "recording" — used by the queue drain wait loop. */
   const recordingActiveRef = useRef(false);
   const appContextRef = useRef<string | null>(null);
+  // Aborted when the user cancels (Escape or the cancel button). Every
+  // asynchronous step of the session shares it, so one cancel stops capture,
+  // transcription, cleanup and output together.
+  const pillAbortControllerRef = useRef<AbortController | null>(null);
   const pendingCommitRef = useRef(false);
   const pillActiveRef = useRef(false);
   // Tracks the in-flight prepareSystemAudio() (ducking) call. Ducking runs
@@ -702,6 +706,9 @@ export default function AppPage(): React.JSX.Element {
   // host two streaming sessions at once, so instead of dropping the press we
   // replay it once the pending commit resolves.
   const pendingReRecordRef = useRef(false);
+  const pendingReRecordContextRef = useRef<string | null | undefined>(
+    undefined,
+  );
 
   const isTranscriptionIdle = useCallback(
     (): boolean =>
@@ -714,6 +721,9 @@ export default function AppPage(): React.JSX.Element {
   // ---- Queue drain ----
   // biome-ignore lint/correctness/useExhaustiveDependencies: drainQueue only reads refs plus hidePill, which is declared later in this component, so adding it to the deps array would reference it before initialization (TDZ). The empty array is intentional.
   const drainQueue = useCallback(async () => {
+    const signal = pillAbortControllerRef.current?.signal;
+    if (!signal || signal.aborted) return;
+
     if (drainingRef.current) {
       drainAgainRef.current = true;
       return;
@@ -721,11 +731,19 @@ export default function AppPage(): React.JSX.Element {
     drainingRef.current = true;
 
     try {
-      while (recordingActiveRef.current && pillActiveRef.current) {
+      while (
+        !signal.aborted &&
+        recordingActiveRef.current &&
+        pillActiveRef.current
+      ) {
         await new Promise((r) => setTimeout(r, 100));
       }
 
-      if (!pillActiveRef.current || queueRef.current.length === 0) {
+      if (
+        signal.aborted ||
+        !pillActiveRef.current ||
+        queueRef.current.length === 0
+      ) {
         return;
       }
 
@@ -734,7 +752,7 @@ export default function AppPage(): React.JSX.Element {
 
       const results = await Promise.all(batch.map((e) => e.promise));
 
-      if (!pillActiveRef.current) {
+      if (signal.aborted || !pillActiveRef.current) {
         return;
       }
 
@@ -818,13 +836,16 @@ export default function AppPage(): React.JSX.Element {
       } else {
         const combined = nonEmpty.map((r) => r.raw).join(" ");
         try {
-          const res = await getClient().api["post-process"].$post({
-            json: {
-              text: combined,
-              appContext: appContextRef.current,
+          const res = await getClient().api["post-process"].$post(
+            {
+              json: {
+                text: combined,
+                appContext: appContextRef.current,
+              },
             },
-          });
-          if (!pillActiveRef.current) {
+            { init: { signal } },
+          );
+          if (signal.aborted || !pillActiveRef.current) {
             return;
           }
           if (res.ok) {
@@ -855,7 +876,7 @@ export default function AppPage(): React.JSX.Element {
         }
       }
 
-      if (!pillActiveRef.current) {
+      if (signal.aborted || !pillActiveRef.current) {
         return;
       }
 
@@ -886,13 +907,16 @@ export default function AppPage(): React.JSX.Element {
         // dictation is safer than leaking un-redacted output. When no such hook
         // is present, a transient failure falls back to delivering unchanged.
         try {
-          const res = await getClient().api.output.deliver.$post({
-            json: {
-              text: finalText,
-              mode: requestedMode,
-              appContext: appContextRef.current,
+          const res = await getClient().api.output.deliver.$post(
+            {
+              json: {
+                text: finalText,
+                mode: requestedMode,
+                appContext: appContextRef.current,
+              },
             },
-          });
+            { init: { signal } },
+          );
           if (res.ok) {
             const data = await res.json();
             deliverText = data.output.text;
@@ -917,7 +941,9 @@ export default function AppPage(): React.JSX.Element {
           // Otherwise best-effort — deliver the client-decided text/mode.
         }
 
-        if (shouldDeliver && deliverText.trim()) {
+        // Also covers an aborted beforeOutput call, which lands in the catch
+        // above and must not fall back to delivering the unchanged text.
+        if (!signal.aborted && shouldDeliver && deliverText.trim()) {
           const delivery =
             deliverMode === "clipboard"
               ? window.api.copyText(deliverText, appContextRef.current)
@@ -932,6 +958,7 @@ export default function AppPage(): React.JSX.Element {
       } catch (err) {
         console.error("[pill] paste/copy failed:", err);
       }
+      if (signal.aborted) return;
       window.api.sendTranscriptionDone();
 
       // North-star usage metric: fires exactly once per completed dictation,
@@ -960,6 +987,7 @@ export default function AppPage(): React.JSX.Element {
       drainingRef.current = false;
       if (drainAgainRef.current) {
         drainAgainRef.current = false;
+        // Returns at once when the session was cancelled in the meantime.
         void drainQueue();
       } else if (
         pillActiveRef.current &&
@@ -977,7 +1005,8 @@ export default function AppPage(): React.JSX.Element {
   const restFallbackTranscribe = useCallback(
     (errorMsg: string): Promise<TranscribeResult> | null => {
       const wavBlob = streamerRef.current?.getWavBlob() ?? null;
-      if (!wavBlob) return null;
+      const signal = pillAbortControllerRef.current?.signal;
+      if (!wavBlob || !signal || signal.aborted) return null;
       const headers: Record<string, string> = {
         "Content-Type": "audio/wav",
         "x-audio-duration-ms": String(lastRecordingDurationRef.current),
@@ -990,6 +1019,7 @@ export default function AppPage(): React.JSX.Element {
         method: "POST",
         body: wavBlob,
         headers,
+        signal,
       })
         .then(async (res) => {
           if (!res.ok) {
@@ -1037,7 +1067,11 @@ export default function AppPage(): React.JSX.Element {
             providerCategory: data.provider_category,
           };
         })
-        .catch(() => ({ raw: "", cleaned: "", error: errorMsg }));
+        .catch(() =>
+          signal.aborted
+            ? { raw: "", cleaned: "", disposition: "aborted" as const }
+            : { raw: "", cleaned: "", error: errorMsg },
+        );
     },
     [],
   );
@@ -1544,6 +1578,7 @@ export default function AppPage(): React.JSX.Element {
     streamResolverRef.current = null;
     streamSessionErrorRef.current = null;
     pendingReRecordRef.current = false;
+    pendingReRecordContextRef.current = undefined;
     // Hiding removes the hovered element before onMouseLeave can fire. Reset
     // its transient reveal state so the next session does not inherit an open
     // cancel button; the "always" preference remains pinned open.
@@ -1618,7 +1653,10 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Start recording ----
   const startRecording = useCallback(
-    async (forReRecord = false) => {
+    async (
+      forReRecord = false,
+      capturedAppContext?: string | null,
+    ): Promise<void> => {
       if (wantsMicRef.current) {
         return;
       }
@@ -1628,6 +1666,14 @@ export default function AppPage(): React.JSX.Element {
         exitingRef.current = null;
         setExiting(null);
       }
+      // A re-record continues the visible session; anything else, or a session
+      // the user cancelled, starts with a fresh controller.
+      let controller = pillAbortControllerRef.current;
+      if (!forReRecord || !controller || controller.signal.aborted) {
+        controller = new AbortController();
+        pillAbortControllerRef.current = controller;
+      }
+      const signal = controller.signal;
       wantsMicRef.current = true;
       pillActiveRef.current = true;
       pendingCommitRef.current = false;
@@ -1647,33 +1693,18 @@ export default function AppPage(): React.JSX.Element {
         .api.transcribe["pre-warm"].$post()
         .catch(() => {});
 
-      appContextRef.current = null;
-      // Streaming is always active — prime the streamer's context.
-      try {
-        getStreamer().setContext(null);
-      } catch {}
-
-      // Whether cleanup routing needs the frontmost app is read from the cache
-      // primed at mount and kept fresh by the `cleanup-context-changed` IPC —
-      // no per-recording GET /api/settings on this hot path.
-      if (getNeedsAppContextForCleanup()) {
-        void window.api
-          ?.getFrontmostApp()
-          .then((app) => {
-            if (!wantsMicRef.current) return;
-            appContextRef.current = app;
-            try {
-              getStreamer().setContext(app);
-            } catch {}
-          })
-          .catch(() => {
-            if (!wantsMicRef.current) return;
-            appContextRef.current = null;
-            try {
-              getStreamer().setContext(null);
-            } catch {}
-          });
+      // The destination was captured by main before the pill appeared (on
+      // GNOME the pill takes focus, so asking now would name the pill). A
+      // re-record keeps its destination unless this hotkey press brought a new
+      // one. The cached setting decides whether context is used at all.
+      if (capturedAppContext !== undefined) {
+        appContextRef.current = getNeedsAppContextForCleanup()
+          ? capturedAppContext
+          : null;
       }
+      try {
+        getStreamer().setContext(appContextRef.current);
+      } catch {}
 
       // Keep initializing as bookkeeping; the waveform starts at rest.
       setPillState("initializing");
@@ -1708,12 +1739,12 @@ export default function AppPage(): React.JSX.Element {
         const micGen = rec.generation();
         const stream = await acquirePromise;
 
-        if (!wantsMicRef.current) {
+        if (signal.aborted || !wantsMicRef.current) {
           rec.cancel(micGen);
           rec.releaseStream(micGen);
           void restoreSystemAudioSafely();
           streamerRef.current?.cancel();
-          if (forReRecord) {
+          if (forReRecord && !signal.aborted) {
             resumeTranscribingOrHide();
           }
           return;
@@ -1743,6 +1774,12 @@ export default function AppPage(): React.JSX.Element {
         } catch {}
       } catch (err) {
         if (err instanceof RecorderSupersededError) return;
+        // A mic error that lands after the user cancelled is not worth a dialog.
+        if (signal.aborted) {
+          recorderRef.current.releaseStream();
+          void restoreSystemAudioSafely();
+          return;
+        }
         pendingCommitRef.current = false;
         recorderRef.current.releaseStream();
         void restoreSystemAudioSafely();
@@ -1768,6 +1805,10 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Commit recording ----
   const commitRecording = useCallback(async () => {
+    // A key release after Escape must not commit the cancelled recording.
+    const signal = pillAbortControllerRef.current?.signal;
+    if (!signal || signal.aborted) return;
+
     wantsMicRef.current = false;
     recordingActiveRef.current = false;
 
@@ -1851,7 +1892,9 @@ export default function AppPage(): React.JSX.Element {
             setPendingCount((count) => Math.max(0, count - 1));
             if (pendingReRecordRef.current && !wantsMicRef.current) {
               pendingReRecordRef.current = false;
-              void startRecording(true);
+              const context = pendingReRecordContextRef.current;
+              pendingReRecordContextRef.current = undefined;
+              void startRecording(true, context);
             }
           }),
         });
@@ -1893,7 +1936,9 @@ export default function AppPage(): React.JSX.Element {
           // has already taken the mic.
           if (pendingReRecordRef.current && !wantsMicRef.current) {
             pendingReRecordRef.current = false;
-            void startRecording(true);
+            const context = pendingReRecordContextRef.current;
+            pendingReRecordContextRef.current = undefined;
+            void startRecording(true, context);
           }
         }),
       });
@@ -1910,7 +1955,7 @@ export default function AppPage(): React.JSX.Element {
       : null;
     recorderRef.current.releaseStream();
 
-    if (!pillActiveRef.current) {
+    if (signal.aborted || !pillActiveRef.current) {
       return;
     }
 
@@ -1937,6 +1982,7 @@ export default function AppPage(): React.JSX.Element {
     if (isSubsequent) headers["x-skip-post-process"] = "true";
 
     const serverOk = await refreshApiBase();
+    if (signal.aborted) return;
     if (!serverOk) {
       failedTranscriptionErrorRef.current = isRemoteServer()
         ? `Cannot reach the server at ${getApiBase()}`
@@ -1950,7 +1996,7 @@ export default function AppPage(): React.JSX.Element {
     setPendingCount((c) => c + 1);
     const transcribePromise: Promise<TranscribeResult> = apiFetch(
       "/api/transcribe",
-      { method: "POST", body: wavBlob, headers },
+      { method: "POST", body: wavBlob, headers, signal },
     )
       .then(async (res) => {
         if (!res.ok) {
@@ -2005,6 +2051,9 @@ export default function AppPage(): React.JSX.Element {
         };
       })
       .catch((err) => {
+        if (signal.aborted) {
+          return { raw: "", cleaned: "", disposition: "aborted" as const };
+        }
         const msg = err instanceof Error ? err.message : "Transcription failed";
         const hint =
           msg.includes("fetch") || msg.includes("Failed")
@@ -2035,10 +2084,18 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Cancel ----
   const cancelRecording = useCallback(() => {
+    // Settle a pending streaming commit so its queue entry (and the drain
+    // waiting on it) ends instead of hanging into the next session.
+    const resolver = streamResolverRef.current;
+    streamResolverRef.current = null;
+    pendingReRecordRef.current = false;
+    pendingReRecordContextRef.current = undefined;
+    pillAbortControllerRef.current?.abort();
     recorderRef.current.cancel();
     recorderRef.current.releaseStream();
     void restoreSystemAudioSafely();
     streamerRef.current?.cancel();
+    resolver?.({ raw: "", cleaned: "", disposition: "aborted" });
     window.api?.sendRecordingCancelled?.();
     dismissPill("cancelled");
   }, [dismissPill, restoreSystemAudioSafely]);
@@ -2717,7 +2774,7 @@ export default function AppPage(): React.JSX.Element {
 
   // ---- Hotkey handlers ----
   useEffect(() => {
-    const removeDown = window.api.onHotkeyDown(() => {
+    const removeDown = window.api.onHotkeyDown((appContext) => {
       // Dictation is the primary use of this pill; a remix card sitting in
       // front of it (most likely one the user has already read and moved on
       // from) gets out of the way rather than blocking the press.
@@ -2728,13 +2785,13 @@ export default function AppPage(): React.JSX.Element {
       }
       const s = stateRef.current;
       if (s === "idle") {
-        startRecording(false);
+        startRecording(false, appContext);
       } else if (s === "error") {
         // A fresh hotkey press means "start a new dictation". The failed
         // capture remains retryable from the visible Retry button until then.
         setPillNotice(null);
         setCanRetry(false);
-        void startRecording(false);
+        void startRecording(false, appContext);
       } else if (s === "transcribing" && !wantsMicRef.current) {
         if (isTranscriptionIdle()) {
           dismissPill("quiet");
@@ -2745,11 +2802,12 @@ export default function AppPage(): React.JSX.Element {
         // re-record until the commit resolves rather than dropping the press.
         if (streamResolverRef.current !== null) {
           pendingReRecordRef.current = true;
+          pendingReRecordContextRef.current = appContext;
           return;
         }
         // A previous batch transcription is still in flight; start a new
         // recording alongside it. Its result is queued and drained normally.
-        void startRecording(true);
+        void startRecording(true, appContext);
       }
     });
     const removeUp = window.api.onHotkeyUp(() => {

@@ -43,7 +43,9 @@ declare global {
       localWhisperPromptRecovery: () => Promise<
         "cloud" | "models" | "dismissed"
       >;
-      onHotkeyDown: (callback: () => void) => () => void;
+      onHotkeyDown: (
+        callback: (appContext: string | null) => void,
+      ) => () => void;
       onHotkeyUp: (callback: () => void) => () => void;
       onDictationCancel: (callback: () => void) => () => void;
       onFullscreenChanged: (

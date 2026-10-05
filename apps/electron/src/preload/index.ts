@@ -164,8 +164,13 @@ const api = {
     ipcRenderer.invoke("logs:open-folder"),
   openExternal: (url: string): Promise<boolean> =>
     ipcRenderer.invoke("open:external", url),
-  onHotkeyDown: (callback: () => void): (() => void) => {
-    const handler = (): void => callback();
+  onHotkeyDown: (
+    callback: (appContext: string | null) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      appContext: unknown,
+    ): void => callback(typeof appContext === "string" ? appContext : null);
     ipcRenderer.on("hotkey:down", handler);
     return () => ipcRenderer.removeListener("hotkey:down", handler);
   },

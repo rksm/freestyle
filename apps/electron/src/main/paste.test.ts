@@ -169,6 +169,57 @@ describe("pasteIntoFocusedApp on Linux", () => {
     });
   });
 
+  describe("when the user cancels", () => {
+    beforeEach(() => {
+      vi.stubEnv("XDG_SESSION_TYPE", "x11");
+      vi.stubEnv("WAYLAND_DISPLAY", "");
+    });
+
+    it("drops output cancelled before delivery starts", async () => {
+      const beforePaste = vi.fn();
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        pasteIntoFocusedApp("hello", beforePaste, {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(beforePaste).not.toHaveBeenCalled();
+      expect(clipboard.writeText).not.toHaveBeenCalled();
+      expect(injected).toEqual([]);
+    });
+
+    it("leaves the clipboard alone when cancelled while the pill hides", async () => {
+      const controller = new AbortController();
+
+      await expect(
+        pasteIntoFocusedApp("hello", () => controller.abort(), {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(clipboard.writeText).not.toHaveBeenCalled();
+      expect(injected).toEqual([]);
+    });
+
+    it("restores the clipboard when cancelled after it was written", async () => {
+      const controller = new AbortController();
+      clipboard.writeText.mockImplementationOnce((text: string) => {
+        electronText = text;
+        controller.abort();
+      });
+
+      await expect(
+        pasteIntoFocusedApp("hello", undefined, { signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(injected).toEqual([]);
+      expect(electronText).toBe(PRIOR);
+    });
+  });
+
   it("does not use Wayland tools or the focus bridge on X11", async () => {
     vi.stubEnv("XDG_SESSION_TYPE", "x11");
     vi.stubEnv("WAYLAND_DISPLAY", "");
