@@ -30,9 +30,9 @@ describe("typed API client startup routing", () => {
 
     await getClient().api.settings.$get();
 
-    const request = fetchMock.mock.calls[0]?.[0] as Request;
-    expect(request.url).toBe("https://desktop.example.test/api/settings");
-    expect(request.headers.get("authorization")).toBe(
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://desktop.example.test/api/settings");
+    expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer configured-server-token",
     );
   });
@@ -49,17 +49,17 @@ describe("typed API client startup routing", () => {
       json: { device_code: "device-code" },
     });
 
-    const request = fetchMock.mock.calls[0]?.[0] as Request;
-    expect(request.url).toBe(
-      "https://desktop.example.test/api/auth/device/token",
-    );
-    expect(request.method).toBe("POST");
-    expect(request.headers.get("authorization")).toBe(
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://desktop.example.test/api/auth/device/token");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("authorization")).toBe(
       "Bearer configured-server-token",
     );
-    await expect(request.json()).resolves.toEqual({
-      device_code: "device-code",
-    });
+    // A stream body fails in Electron's Chromium over HTTP/1.1.
+    expect(init.body).toBeInstanceOf(ArrayBuffer);
+    expect(
+      JSON.parse(new TextDecoder().decode(init.body as ArrayBuffer)),
+    ).toEqual({ device_code: "device-code" });
   });
 
   it("reports a typed protected 401 to the shared observer", async () => {
