@@ -1,0 +1,290 @@
+#+TITLE: Deepgram stream finalization: Finalize with a warm socket, or CloseStream per recording
+#+DATE: [2026-10-05 Mon]
+
+* Summary
+
+Freestyle needs a clear signal that Deepgram has sent the last words of a
+dictation. There are two ways to get it.
+
+- *Current choice (upstream 0.9.2):* send ~Finalize~ at commit and keep one
+  warm socket across recordings.
+- *Earlier fork choice:* send ~CloseStream~ at commit and open one socket per
+  recording. This was commit ~6860620~.
+
+The rebase onto upstream 0.9.2 keeps the upstream approach. This document
+records why the fork changed it, what the change touched, and how to switch
+back. The fork commits stay reachable on the local ~main~ branch.
+
+Neither approach is proven better, because the data below does not separate them.
+
+* Why the fork switched to CloseStream (6860620)
+
+** The failure
+
+After commit, the server waits for Deepgram's final result. If nothing
+arrives, it gives up after ~COMMIT_TIMEOUT_MS~ (12 s) and delivers what it
+has. A dictation that hits this limit shows up as ~stt=12004ms~.
+=docs/2026-07-19_improvements.org= on ~main~ lists one such outlier (open item
+4): a Deepgram commit timeout on a kept-warm socket.
+
+** The cause given in the code
+
+The commit message of ~6860620~ says only "close streams to finalize
+dictation". The reason is in the comment it added to ~commit()~:
+
+#+BEGIN_QUOTE
+CloseStream gives each dictation a definitive completion message: Deepgram
+flushes all cached audio, sends every remaining Results message, then sends
+Metadata before closing the socket. Finalize is unsuitable here because
+Deepgram does not guarantee an acknowledgement when no significant audio
+remains buffered.
+#+END_QUOTE
+
+In short:
+
+- ~Finalize~ asks Deepgram to flush its buffer. If little or no audio is
+  buffered, Deepgram may send no reply. The server then waits for the full
+  12 s.
+- ~CloseStream~ always ends with a ~Metadata~ message, so the provider can
+  treat ~Metadata~ as "done".
+
+** What 6860620 changed in behavior
+
+- Commit sends ~CloseStream~ and stops the keep-alive timer.
+- The provider delivers the final text when ~Metadata~ arrives, not on the
+  first ~is_final~ result after commit. Late ~Results~ messages that arrive
+  before ~Metadata~ still join the text.
+- After commit, partial updates are not forwarded.
+- Deepgram sessions become per-recording. The socket closes after each
+  dictation and a new one opens on the next ~start~.
+
+* What the latency analysis found
+
+Source: =2026-08-25-improvements.org= (untracked file in the main checkout,
+written 2026-08-25). It covers 135 recent ~deepgram/nova-3~ entries from
+the transcription history. The text describes an adapter that sends
+~CloseStream~. The history may also hold older entries from the ~Finalize~
+code, so the data cannot say which approach is faster.
+
+| Stage        | Median | p95    | Maximum |
+|--------------+--------+--------+---------|
+| Context      | 28 ms  | 67 ms  | 107 ms  |
+| STT          | 183 ms | 2.95 s | 12.00 s |
+| Recorded LLM | 1.53 s | 3.61 s | 6.43 s  |
+| Total        | 1.76 s | 6.29 s | 13.03 s |
+
+Deepgram findings:
+
+- The slowest entry took exactly 12.004 s. That matches the commit timeout.
+- Several short recordings (2 to 4 s of audio) waited about 4.6 to 5 s.
+  Audio length had almost no link to the delay, so local audio handling is
+  unlikely to be the cause.
+- The history stores only the final duration. It cannot tell a Deepgram
+  delay from a network or WebSocket problem.
+- Deepgram's public status history showed no matching Streaming API incidents
+  on the affected dates.
+
+Recommendations from the analysis:
+
+1. Turn on numeric endpointing, starting near 300 ms, so finalized segments
+   arrive while the user still speaks.
+2. Send ~Finalize~ at commit. Do not use ~CloseStream~ as the flush.
+3. Wait 1.5 to 2 s for the final result, then fall back to the last stable
+   transcript.
+4. Use ~CloseStream~ only for teardown.
+5. Test against saved recordings before making it the default, mainly for
+   missing trailing words. A ~Finalize~ reply is not guaranteed when
+   Deepgram has nothing significant buffered.
+6. Log the commit-sent time, first final result, ~from_finalize~, ~Metadata~,
+   socket close, timeout, and the request ID.
+
+Note that recommendation 2 is the upstream approach, while ~6860620~ moved
+away from it. The analysis does not mention that conflict. The two
+statements agree on one point: ~Finalize~ may get no reply, so a short
+fallback timeout matters.
+
+The fork never ran the experiment. The instrumentation ~c64c996~ was added
+to find out why about 4% of dictations still took 2.5 to 7.7 s after
+~CloseStream~. No result was recorded in the repository.
+
+* What the change touched, and where it lives upstream
+
+Paths are relative to =apps/server/src=.
+
+** lib/streaming/providers/deepgram.ts
+
+Upstream 0.9.2 today:
+
+- ~commit()~ sets ~commitRequested~, starts the 12 s timer, and sends
+  ~Finalize~ through ~sendFinalize()~. If the socket is still connecting,
+  ~sendFinalize()~ runs from the ~open~ handler instead.
+- A non-empty ~is_final~ result after commit calls ~deliverFinal()~ at once.
+- ~cancel()~ keeps the socket open and drops the transcript. The comment
+  there says Deepgram is kept warm.
+- A keep-alive timer sends ~KeepAlive~ every 5 s for the life of the socket.
+- Audio sent while the socket connects goes through ~createPendingAudio()~
+  (=lib/streaming/pending-audio.ts=). It is flushed in the ~open~ handler,
+  before any ~Finalize~.
+
+The fork version:
+
+- ~commit()~ calls ~stopKeepAlive()~ and sends ~CloseStream~.
+- A ~Metadata~ message calls ~deliverFinal()~ when a commit is pending.
+- ~is_final~ results after commit only add text.
+- ~cancel()~ no longer carries the "warm socket" comment.
+
+** lib/streaming/session-policy.ts
+
+~shouldKeepStreamingUpstreamAlive()~ returns ~false~ for ~soniox~ and
+~freestyle-cloud~ upstream. The fork also returned ~false~ for ~deepgram~.
+Its test, =tests/session-policy.test.ts=, moved ~deepgram~ from "keeps warm"
+to "ephemeral".
+
+** routes/stream.ts
+
+Upstream already has the per-recording machinery, so the policy flag is
+almost enough:
+
+- ~onOpen~ skips the early upstream start when the provider is not kept
+  alive. The socket opens on ~start~ instead.
+- ~onFinal~ closes the upstream session for such providers.
+- ~start~ reuses a session only when it is warm and the config key matches.
+- ~cancel~ closes the upstream session for such providers.
+
+The fork also added a reconnect rule in the upstream ~onClose~ handler:
+
+- Clear ~upstreamConfigKey~ when the socket closes.
+- Remember whether the recording was committed (~commitTime > 0~).
+- Reconnect only if the recording was not committed, or if the provider is
+  kept alive.
+
+Reason: after ~CloseStream~ the socket closing is the normal end of a
+dictation. Without the rule, the route would reconnect while the finished
+transcript is still being post-processed.
+
+Does current upstream need the rule? Probably yes, but this was not tested.
+In upstream ~onFinal~, the call to ~closeUpstreamSession()~ comes after
+~await createHookApi()~. Deepgram closes the socket right after ~Metadata~.
+The ~close~ event can arrive during that ~await~, while ~upstream === session~
+is still true. ~onClose~ would then count a reconnect and start a new
+upstream. Check this with a test before dropping the rule.
+
+The fork's version also set ~captureUpstreamRecording = null~ in that
+handler. That variable belongs to the context-aware dictation work, not to
+this change. Port it only if the context work in this branch uses it.
+
+** Tests
+
+On ~main~, =apps/server/tests/deepgram-cancel.test.ts= and
+=apps/server/tests/session-policy.test.ts= carry the ~6860620~ tests:
+
+- ~commit~ sends ~CloseStream~, not ~Finalize~.
+- All final results before ~Metadata~ are collected, and the text is
+  delivered once on ~Metadata~.
+- ~Metadata~ completes the dictation when the last ~Results~ is empty.
+- ~cancel~ sends nothing and does not close the socket.
+- ~close()~ tears the socket down.
+
+The test file does not exist upstream, so copy it from ~main~.
+
+* How to switch back to CloseStream
+
+All commits below are reachable from the local ~main~ branch. Do not
+cherry-pick ~6860620~ as it is. Upstream changed ~deepgram.ts~ and
+~stream.ts~ a lot since 0.6.1 (the fork point), so apply the intent by hand.
+Use ~git show 6860620~ as the reference.
+
+1. In =lib/streaming/session-policy.ts=, add ~providerId !== "deepgram"~ to
+   ~shouldKeepStreamingUpstreamAlive()~. Update the file comment.
+2. In =lib/streaming/providers/deepgram.ts=, change the message in
+   ~sendFinalize()~ to ~{ type: "CloseStream" }~. Keep the rest of the
+   helper: it already handles a commit that arrives while the socket is
+   connecting, which the fork version did not.
+3. In ~commit()~, call ~stopKeepAlive()~ before sending.
+4. In the ~message~ handler, add a branch before the ~Results~ check:
+   when ~msg.type === "Metadata"~ and ~commitRequested~, call ~deliverFinal()~,
+   then return.
+5. In the ~Results~ branch, remove the ~deliverFinal()~ call after commit.
+   After commit, add final text but do not call ~onPartial~, for both
+   ~is_final~ and interim results.
+6. Update the ~cancel()~ comment. Upstream's route already closes
+   per-recording sessions on cancel, so the provider's ~cancel()~ body can
+   stay as it is.
+7. In =routes/stream.ts=, add the reconnect rule from the previous section
+   to the ~onClose~ handler of ~startUpstream~. Add a test that a commit
+   followed by a socket close does not start a second upstream.
+8. Copy =tests/deepgram-cancel.test.ts= from the ~6860620~ version
+   (~git show 6860620:apps/server/tests/deepgram-cancel.test.ts~). Update
+   =tests/session-policy.test.ts= as in ~6860620~.
+9. Run the server tests and dictate a few short recordings. Confirm no
+   timeout appears and no trailing words are lost.
+
+To undo a switch, revert these edits. Nothing else depends on them.
+
+* Context keyterms and the warm socket
+
+The route builds a session fingerprint (~key~ in ~resolveStreamConfig()~). It
+includes provider, model, languages, translate mode, and the resolved
+vocabulary bias. With context-aware dictation, the bias contains keyterms
+taken from the active window for each dictation. When those terms change
+between recordings, the fingerprint changes. The route then closes the warm
+socket and opens a new one.
+
+So with per-dictation context, the warm socket is rarely reused, even with
+upstream's approach. The practical difference between the two approaches is
+smaller than it looks:
+
+- Both usually open a new socket on ~start~.
+- The remaining difference is the commit signal (~Finalize~ versus
+  ~CloseStream~ plus ~Metadata~).
+- The warm socket still helps when the context is empty or unchanged, for
+  example dictation in the same window with the same terms.
+
+This was the reasoning in the fork's notes: contextual terms force a new
+Deepgram socket per recording.
+
+* What c64c996 measured
+
+~c64c996~ ("debug(deepgram): instrument stream finalization timing
+[temporary]") is dropped in this rebase. It was meant to explain why about 4%
+of dictations took 2.5 to 7.7 s to finalize after ~CloseStream~. Use it as a
+recipe if the same question comes up again. It touched
+=lib/streaming/providers/deepgram.ts=, =lib/streaming/types.ts=,
+=lib/transcription-log.ts=, =routes/stream.ts=, and the Deepgram test file.
+
+It reported the following with each final result:
+
+| Field                | Meaning                                                    |
+|----------------------+------------------------------------------------------------|
+| ~outcome~            | ~completed~, ~timeout~, or ~socket-not-open~               |
+| ~connectMs~          | Socket creation to open                                    |
+| ~audioSentMs~        | Audio handed to Deepgram, from bytes sent (32 bytes per ms) |
+| ~unfinalizedMs~      | Audio sent but not yet covered by an ~is_final~ result at commit |
+| ~sendBufferedBytes~  | Bytes still in the local socket send buffer at commit      |
+| ~lastResultMs~       | Commit to the last ~Results~ message after commit          |
+| ~flushMs~            | Commit to ~Metadata~, or to the timeout                    |
+| ~requestId~          | Deepgram request ID, for support tickets                   |
+| ~queuedMs~ (route)   | How long the commit waited for ~session.ready~             |
+
+The route logged one ~[stt]~ line per final and wrote the same data as
+~finalization~ in =transcriptions.jsonl=.
+
+The repository holds no findings. The commit was built to answer:
+
+- Is the delay in socket setup (~connectMs~, ~queuedMs~)?
+- Is Deepgram still transcribing an audio tail (~unfinalizedMs~)?
+- Is the local send buffer backed up (~sendBufferedBytes~)?
+- Is it Deepgram itself (large ~flushMs~ with a small tail)?
+
+For the ~Finalize~ approach, the first field to add is the time of the
+~from_finalize~ result, because the open question there is whether Deepgram
+replies at all.
+
+* Open items
+
+- Nobody has measured ~Finalize~ and ~CloseStream~ side by side. The history
+  mixes both.
+- The 12 s commit timeout is long. The analysis suggests 1.5 to 2 s with a
+  fallback to the last stable transcript. This rebase leaves it unchanged.
+- Nobody has tested whether upstream 0.9.2 needs the reconnect rule.
+- Nobody has checked any of this against a live Deepgram connection.
