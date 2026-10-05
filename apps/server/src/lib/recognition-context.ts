@@ -64,6 +64,14 @@ const COMMON_WORDS = new Set([
 
 const SENSITIVE_ASSIGNMENT =
   /(\b[A-Za-z_][A-Za-z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|BEARER)[A-Za-z0-9_-]*\s*(?:=|:)\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi;
+// Secret shapes with no NAME=value form: bearer tokens, URL passwords, and
+// DB CLI passwords (`mysql -phunter2`). The CLI rule is limited to DB clients
+// so `ssh -p 22` and `gcc -pthread` stay intact. Bearer needs 8+ token
+// characters so prose such as "Bearer tokens" survives.
+const BEARER_TOKEN = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
+const URL_PASSWORD = /(\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)[^/\s@]+(?=@)/gi;
+const DB_CLI_PASSWORD =
+  /(\b(?:mysql|mysqldump|mysqladmin|mariadb|mycli)\b[^\n]*?\s-p)\S+/g;
 const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/gi;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -77,7 +85,10 @@ const TRANSIENT_MEASUREMENT = /^\d+(?:ms|s|m|h|%)$/i;
 function redactText(text: string): string {
   return text
     .replace(PEM_BLOCK, "")
-    .replace(SENSITIVE_ASSIGNMENT, "$1[redacted]");
+    .replace(SENSITIVE_ASSIGNMENT, "$1[redacted]")
+    .replace(BEARER_TOKEN, "$1[redacted]")
+    .replace(URL_PASSWORD, "$1[redacted]")
+    .replace(DB_CLI_PASSWORD, "$1[redacted]");
 }
 
 function shannonEntropy(value: string): number {

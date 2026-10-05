@@ -73,6 +73,9 @@ export function logTranscriptionDebug(entry: TranscriptionDebugEntry): void {
         ...record,
         ...(app ? { app } : {}),
       })}\n`,
+      // Holds screen excerpts: owner-only. Applies when the file is created,
+      // including after rotation.
+      { mode: 0o600 },
     );
   } catch (err) {
     log.warn(`failed to write transcription debug entry: ${err}`);

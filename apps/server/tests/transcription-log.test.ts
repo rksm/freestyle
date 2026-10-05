@@ -48,6 +48,21 @@ describe("transcription debug log", () => {
     expect(appendFileSync).not.toHaveBeenCalled();
   });
 
+  it("creates the log file readable by its owner only", () => {
+    logTranscriptionDebug({
+      source: "batch",
+      raw: "raw transcript",
+      cleaned: "cleaned transcript",
+      timings: {},
+    });
+
+    expect(appendFileSync).toHaveBeenCalledWith(
+      "/tmp/freestyle-test/transcriptions.jsonl",
+      expect.any(String),
+      { mode: 0o600 },
+    );
+  });
+
   it("records only the target application from app context", () => {
     logTranscriptionDebug({
       source: "streaming",

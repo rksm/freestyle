@@ -12,6 +12,7 @@ const sourceKeys = [
   "context_source_window",
   "context_source_terminal",
   "context_source_editor",
+  "context_source_accessibility",
 ];
 const keys = [...coreKeys, ...sourceKeys];
 

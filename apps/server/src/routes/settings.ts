@@ -20,6 +20,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import {
   CONTEXT_ENABLED_SETTING,
+  CONTEXT_SOURCE_ACCESSIBILITY_SETTING,
   CONTEXT_SOURCE_EDITOR_SETTING,
   CONTEXT_SOURCE_TERMINAL_SETTING,
   CONTEXT_SOURCE_WINDOW_SETTING,
@@ -129,6 +130,7 @@ const settings = new Hono()
       key === CONTEXT_SOURCE_WINDOW_SETTING ||
       key === CONTEXT_SOURCE_TERMINAL_SETTING ||
       key === CONTEXT_SOURCE_EDITOR_SETTING ||
+      key === CONTEXT_SOURCE_ACCESSIBILITY_SETTING ||
       key === TRANSCRIPTION_DEBUG_LOG_SETTING
     ) {
       const parsed = booleanSettingSchema.safeParse(body.value);

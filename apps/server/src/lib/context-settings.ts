@@ -6,6 +6,8 @@ export const CONTEXT_TO_CLEANUP_SETTING = "context_to_cleanup";
 export const CONTEXT_SOURCE_WINDOW_SETTING = "context_source_window";
 export const CONTEXT_SOURCE_TERMINAL_SETTING = "context_source_terminal";
 export const CONTEXT_SOURCE_EDITOR_SETTING = "context_source_editor";
+export const CONTEXT_SOURCE_ACCESSIBILITY_SETTING =
+  "context_source_accessibility";
 
 function settingDefaultsToEnabled(key: string): boolean {
   return readSetting(key) !== "false";

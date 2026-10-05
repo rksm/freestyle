@@ -181,6 +181,32 @@ describe("buildRecognitionContext", () => {
     expect(context.cleanup?.excerpt).not.toContain("PRIVATE KEY");
   });
 
+  it.each([
+    [
+      'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"',
+      "eyJhbGciOiJIUzI1NiJ9",
+    ],
+    ["psql postgres://admin:s3cretpw@db.example.com/app", "s3cretpw"],
+    ["mysql -u root -phunter2 shop", "hunter2"],
+  ])("redacts %s from the excerpt", (line, secret) => {
+    const context = buildRecognitionContext({
+      snapshot: terminalSnapshot(line),
+    });
+
+    expect(context.cleanup?.excerpt).toContain("[redacted]");
+    expect(context.cleanup?.excerpt).not.toContain(secret);
+  });
+
+  it("keeps ordinary commands and prose intact", () => {
+    const text =
+      "ssh -p 22 host; ssh -p2222 host; gcc -pthread a.c; Bearer tokens";
+    const context = buildRecognitionContext({
+      snapshot: terminalSnapshot(text),
+    });
+
+    expect(context.cleanup?.excerpt).toBe(text);
+  });
+
   it("merges vocabulary, plugin terms, and context in priority order", () => {
     const db = getDb();
     db.prepare("INSERT INTO vocabulary (term, notes) VALUES (?, ?)").run(

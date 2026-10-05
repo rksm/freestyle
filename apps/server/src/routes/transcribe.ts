@@ -418,7 +418,10 @@ const transcribeRoute = new Hono().post("/", async (c) => {
       );
       const providerLanguage =
         voiceProvider === MLX_ASR_PROVIDER_ID ? undefined : primaryLanguage;
-      log.debug(`bias=${JSON.stringify(bias)}`);
+      // Terms come from the screen, so log only their shape.
+      log.debug(
+        `bias kind=${bias?.kind ?? "none"} terms=${recognitionContext.terms.length}`,
+      );
       const t0 = Date.now();
       const result = await provider.transcribe({
         audio: audioData,
