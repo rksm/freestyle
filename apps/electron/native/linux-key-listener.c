@@ -415,6 +415,23 @@ int main(int argc, char *argv[]) {
         }
 
         for (int i = 0; i < nfds; i++) {
+            if (pollfds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                close(fds[i]);
+                fds[i] = pollfds[i].fd = -1;
+
+                /* A disconnected device cannot send releases for held keys. */
+                g_ctrlDown = g_altDown = g_shiftDown = g_metaDown = 0;
+                if (g_isKeyDown) {
+                    g_isKeyDown = 0;
+                    printf("KEY_UP\n");
+                    fflush(stdout);
+                }
+                if (g_record_mode) {
+                    printf("RECORD_RELEASE\n");
+                    fflush(stdout);
+                }
+                continue;
+            }
             if (!(pollfds[i].revents & POLLIN)) continue;
 
             struct input_event ev;
@@ -470,6 +487,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    for (int i = 0; i < nfds; i++) close(fds[i]);
+    for (int i = 0; i < nfds; i++) {
+        if (fds[i] >= 0) close(fds[i]);
+    }
     return 0;
 }
