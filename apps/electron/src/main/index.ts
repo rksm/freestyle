@@ -52,9 +52,6 @@ import {
   captureException,
   closeDb,
   disposeServerPlugins,
-  isTelemetryEnabled,
-  removeLegacyTelemetryIdentity,
-  setTelemetrySettingChangeHandler,
   shutdownSentry,
   startServer as startFreestyleServer,
 } from "@freestyle-voice/server";
@@ -63,7 +60,6 @@ import {
   REMIX_CLIPBOARD_LIMIT,
   serverUrlSchema,
 } from "@freestyle-voice/validations";
-import * as Sentry from "@sentry/electron/main";
 import {
   app,
   BrowserWindow,
@@ -166,37 +162,6 @@ import { createTrayImage } from "./tray-image";
 
 process.env.FREESTYLE_ENV ??= is.dev ? "development" : "production";
 process.env.FREESTYLE_APP_VERSION ??= app.getVersion();
-
-function initElectronSentry(): void {
-  Sentry.init({
-    dsn:
-      process.env.SENTRY_ELECTRON_DSN ??
-      "https://0c24cb10d17fe12504a6d1ade2c4314d@o4509750817325057.ingest.us.sentry.io/4512022418096128",
-    environment: process.env.FREESTYLE_ENV,
-    release: `freestyle@${process.env.FREESTYLE_APP_VERSION}`,
-    enabled: isTelemetryEnabled(),
-    // The app already forwards explicit main- and renderer-process errors.
-    // Keep Sentry free of automatic sessions, minidumps, and instrumentation
-    // so an opt-out blocks every outbound envelope and the pill stays lean.
-    defaultIntegrations: false,
-    skipOpenTelemetrySetup: true,
-    tracesSampleRate: 0,
-    enableLogs: true,
-    enableMetrics: true,
-    sendDefaultPii: false,
-    attachScreenshot: false,
-    // Renderer errors use the existing local server endpoint. Avoid the custom
-    // protocol path that previously caused Linux CORS failures in the pill.
-    ipcMode: Sentry.IPCMode.Classic,
-    beforeSend: (event) => (isTelemetryEnabled() ? event : null),
-    beforeSendTransaction: (event) => (isTelemetryEnabled() ? event : null),
-    beforeSendLog: (log) => (isTelemetryEnabled() ? log : null),
-  });
-  setTelemetrySettingChangeHandler(() => {
-    const client = Sentry.getClient();
-    if (client) client.getOptions().enabled = isTelemetryEnabled();
-  });
-}
 
 // Test isolation: E2E/probe runs in the unpackaged dev binary would otherwise
 // share the real "Electron" userData (settings.json included) with a running
@@ -2280,12 +2245,8 @@ app.whenReady().then(async () => {
 
   // Set database path for the server before any API calls
   process.env.FREESTYLE_DB_PATH = join(app.getPath("userData"), "freestyle.db");
-  removeLegacyTelemetryIdentity();
-  initElectronSentry();
 
   process.env.FREESTYLE_ENV = is.dev ? "development" : "production";
-  // Expose the app version to the in-process server so Sentry events carry
-  // their release even when it runs outside Electron.
   process.env.FREESTYLE_APP_VERSION = app.getVersion();
 
   // Start the Hono HTTP server with WebSocket support (or reuse an existing one).

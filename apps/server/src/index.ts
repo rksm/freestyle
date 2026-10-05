@@ -25,12 +25,7 @@ import {
   plugins,
 } from "./lib/plugins/index.js";
 import { pullCloudPreferences } from "./lib/preferences-sync.js";
-import {
-  captureException,
-  initSentry,
-  removeLegacyTelemetryIdentity,
-  shutdownSentry,
-} from "./lib/sentry.js";
+import { captureException, shutdownSentry } from "./lib/sentry.js";
 import {
   startSessionKeepAlive,
   stopSessionKeepAlive,
@@ -49,9 +44,6 @@ import routes from "./routes";
 import { prewarmModelCostRegistry } from "./routes/models.js";
 
 const httpLog = createAppLogger("http");
-
-initSentry();
-removeLegacyTelemetryIdentity();
 
 // Lightweight CRUD routers get a request timeout. Transcription, post-process,
 // and the auth device-flow poll are intentionally excluded — they can
@@ -306,13 +298,7 @@ export {
   resolvePackage,
   uninstallPackage,
 } from "./lib/plugins/installer.js";
-export {
-  captureException,
-  isTelemetryEnabled,
-  removeLegacyTelemetryIdentity,
-  setTelemetrySettingChangeHandler,
-  shutdownSentry,
-} from "./lib/sentry.js";
+export { captureException, shutdownSentry } from "./lib/sentry.js";
 export type AppType = ReturnType<typeof createApp>;
 
 export default createApp;
