@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { writeSetting } from "../src/lib/db.js";
 
 // Recognition context reaches the local cleanup prompt as untrusted reference
-// material.
+// material, and local cleanup runs under a deadline so a stalled provider can
+// never hold a dictation hostage.
 
 const cleanupSpy = vi.fn().mockResolvedValue({
   model: "test-model",
@@ -46,7 +47,7 @@ describe("postProcess — recognition context", () => {
     writeSetting("llm_cleanup", "true");
   });
 
-  it("threads recognition context into local cleanup", async () => {
+  it("threads recognition context into local cleanup with a timeout", async () => {
     const api = await createHookApi();
 
     await postProcess("say freestyle", null, {
@@ -65,5 +66,6 @@ describe("postProcess — recognition context", () => {
     expect(params.prompt).toContain(
       "Excerpt from the destination:\nconst product = Freestyle;",
     );
+    expect(params.signal).toBeInstanceOf(AbortSignal);
   });
 });

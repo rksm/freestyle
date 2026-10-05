@@ -31,6 +31,7 @@ import {
   applyFinalRewrites,
   getCleanupAppAssignments,
   postProcess,
+  prewarmPostProcess,
   resolveAppContextForCleanup,
 } from "../lib/post-process.js";
 import { getDefaultModels } from "../lib/providers.js";
@@ -635,6 +636,8 @@ export const transcribePreWarmRoute = new Hono().post("/pre-warm", (c) => {
     // Warm the models.dev cost registry in the background so the per-dictation
     // cost lookup hits a warm cache and never blocks the response.
     prewarmModelCostRegistry();
+    // Warm the cleanup provider's connection (OpenAI, Groq) the same way.
+    prewarmPostProcess();
 
     const defaults = getDefaultModels();
     const provider = defaults.voice?.provider;

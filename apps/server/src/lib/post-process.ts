@@ -47,6 +47,8 @@ import { capture, captureException } from "./sentry.js";
 import { getSessionToken } from "./sessions.js";
 
 const log = createAppLogger("post-process");
+/** A stalled cleanup model falls back to the raw transcript instead of hanging. */
+const CLEANUP_TIMEOUT_MS = 10_000;
 
 export interface PostProcessTimings {
   handoffMs: number;
@@ -139,6 +141,14 @@ export function resolveAppContextForCleanup(
   appContext: string | null,
 ): string | null {
   return needsAppContextForCleanup() ? appContext : null;
+}
+
+/** Warm the default cleanup model while the user is still speaking. */
+export function prewarmPostProcess(): void {
+  const llm = getDefaultModels().llm;
+  if (!llm || !isLlmCleanupEnabled()) return;
+
+  getLlmProvider(llm.provider)?.prewarm?.(llm.model_id);
 }
 
 /**
@@ -368,6 +378,9 @@ export async function postProcess(
           providerOptions: getLlmProvider(llm.provider)?.providerOptions?.(
             llm.model_id,
           ),
+          // The STT helper reports aborts through onError and falls back to
+          // the sanitized raw transcript instead of throwing.
+          signal: AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
           onError: (error) => {
             cleanupError = error;
           },
