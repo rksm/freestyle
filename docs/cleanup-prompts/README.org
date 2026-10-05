@@ -1,0 +1,38 @@
+#+TITLE: Cleanup prompt backups
+#+DATE: [2026-10-05 Mon]
+
+* Why this exists
+
+At startup and every 6 hours, the server fetches the cleanup prompt
+config from Freestyle Cloud (=GET /v2/config=, no account needed). A
+valid response replaces the bundled config
+(=BUNDLED_CLEANUP_PROMPT_CONFIG= in
+=apps/server/src/lib/editor/prompt-config.ts=) in memory. The fork keeps
+this fetch for now. This directory keeps copies of what the cloud served,
+so a later change on the cloud side can be compared and undone.
+
+* Snapshots
+
+- =2026-10-05-cloud-config.json=: the =prompts= object from
+  =https://service.freestylevoice.com/v2/config= on 2026-10-05.
+
+Compared with the bundled config of upstream 0.9.2 on that day:
+
+- Only the three presets differ (=low=, =medium=, =high=). The cloud
+  versions are longer, for example =medium= has 39,560 characters against
+  15,450 bundled.
+- All other parts are identical: tone blocks, routing, user prompt
+  blocks, the destination block, the language constraint, and the
+  language labels.
+- With =cleanup_intensity= set to =custom=, the presets are not used. The
+  custom prompt replaces them.
+
+* Take a new snapshot
+
+#+begin_src sh
+curl -sS https://service.freestylevoice.com/v2/config \
+  | jq '.prompts' > docs/cleanup-prompts/$(date +%F)-cloud-config.json
+#+end_src
+
+Compare two snapshots with
+=diff <(jq -S . OLD.json) <(jq -S . NEW.json)=.

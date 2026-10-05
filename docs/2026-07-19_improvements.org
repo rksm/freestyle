@@ -351,11 +351,13 @@ these areas.
 2. The server still fetches cleanup prompts from Freestyle Cloud at startup
    (=GET /v2/config=, no authentication). The code is
    =refreshCleanupPromptConfig= in =apps/server/src/lib/editor/prompt-config.ts=,
-   called from =apps/server/src/index.ts=. Decide whether to disable it.
+   called from =apps/server/src/index.ts=. Kept for now (decided
+   2026-10-05). Snapshots of the cloud config are in =docs/cleanup-prompts/=.
 3. Fresh installs have no default voice model. Upstream's onboarding no longer
    has the model step, and the fork's =/onboarding= route redirects to Today.
 4. The pill's cancel button stops the renderer session but not a delivery that
-   is already running in main. Only Escape aborts that.
+   is already running in main. Only Escape aborts that. Accepted as is
+   (2026-10-05).
 5. The pill now waits up to 250 ms to capture the target app on every
    platform, not only GNOME Wayland.
 6. Upstream's Remix copy-selection path is not Wayland-ready. Remix is hidden
