@@ -776,6 +776,15 @@ const stream = new Hono().get(
             if (upstream !== session) return;
             upstream = null;
             if (closed || sessionTransportUnavailable) return;
+            // A per-recording session closes itself once it has sent the
+            // final. That close can beat `onFinal`'s own cleanup; reconnecting
+            // here would open an idle session nobody uses.
+            if (
+              commitTime > 0 &&
+              !shouldKeepStreamingUpstreamAlive(voice.provider)
+            ) {
+              return;
+            }
             if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
               reconnectAttempts++;
               startUpstream(ws);
