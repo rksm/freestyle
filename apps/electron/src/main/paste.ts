@@ -359,13 +359,18 @@ function wait(ms: number): Promise<void> {
 const FOCUS_RETURN_TIMEOUT_MS = 400;
 const FOCUS_POLL_INTERVAL_MS = 20;
 
-function isFreestyleWindow(window: {
+/**
+ * True when the window is Freestyle itself, which is never a destination for
+ * pasted text or app context. A dev run (`just dev`) is plain "Electron".
+ */
+export function isFreestyleWindow(window: {
   app?: string;
   wmClass?: string;
   gtkApplicationId?: string;
 }): boolean {
   const fields = [window.wmClass, window.app, window.gtkApplicationId];
-  return fields.some((value) => value && /freestyle/i.test(value));
+  const own = app.isPackaged ? /freestyle/i : /freestyle|^electron$/i;
+  return fields.some((value) => value && own.test(value));
 }
 
 /**

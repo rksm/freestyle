@@ -165,12 +165,19 @@ const api = {
   openExternal: (url: string): Promise<boolean> =>
     ipcRenderer.invoke("open:external", url),
   onHotkeyDown: (
-    callback: (appContext: string | null) => void,
+    callback: (appContext: string | null | undefined) => void,
   ): (() => void) => {
+    // undefined (no probe ran) differs from null (probe found nothing): the
+    // renderer keeps its earlier destination only for undefined.
     const handler = (
       _event: Electron.IpcRendererEvent,
       appContext: unknown,
-    ): void => callback(typeof appContext === "string" ? appContext : null);
+    ): void =>
+      callback(
+        typeof appContext === "string" || appContext === null
+          ? appContext
+          : undefined,
+      );
     ipcRenderer.on("hotkey:down", handler);
     return () => ipcRenderer.removeListener("hotkey:down", handler);
   },

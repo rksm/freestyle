@@ -117,8 +117,18 @@ function parseFocusedWindow(output: string): FocusedWindow {
   return focused;
 }
 
+// The pill can hold focus on GNOME Wayland. Freestyle is never the app being
+// dictated into. Mirrors isFreestyleWindow in the Electron main process, which
+// this plugin cannot import.
+function isFreestyleWindow(focused: FocusedWindow): boolean {
+  return [focused.wmClass, focused.app, focused.gtkApplicationId].some(
+    (value) => typeof value === "string" && /freestyle/i.test(value),
+  );
+}
+
 async function focusedWindow(): Promise<FocusedWindow> {
   for (const bridge of BRIDGES) {
+    let focused: FocusedWindow;
     try {
       const output = await runFile(
         "gdbus",
@@ -134,10 +144,13 @@ async function focusedWindow(): Promise<FocusedWindow> {
         ],
         500,
       );
-      return parseFocusedWindow(output);
+      focused = parseFocusedWindow(output);
     } catch {
       // Try the compatibility bridge before giving up.
+      continue;
     }
+    if (isFreestyleWindow(focused)) throw new Error("Freestyle is focused");
+    return focused;
   }
   throw new Error("FocusBridge unavailable");
 }

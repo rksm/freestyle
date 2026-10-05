@@ -26,6 +26,16 @@ describe("pill hotkey flow", () => {
     expect(down).toContain('send("hotkey:down", appContext)');
   });
 
+  it("skips the probe while the pill is already visible", async () => {
+    const source = await readFile(mainPath, "utf8");
+    const down = sourceForFunction(source, "sendHotkeyDown");
+
+    expect(down).toContain("mainWindow?.isVisible()");
+    expect(down.indexOf("mainWindow?.isVisible()")).toBeLessThan(
+      down.indexOf("getFrontmostApp()"),
+    );
+  });
+
   it("keeps hotkey:down and hotkey:up on one queue so down arrives first", async () => {
     const source = await readFile(mainPath, "utf8");
 

@@ -44,7 +44,7 @@ declare global {
         "cloud" | "models" | "dismissed"
       >;
       onHotkeyDown: (
-        callback: (appContext: string | null) => void,
+        callback: (appContext: string | null | undefined) => void,
       ) => () => void;
       onHotkeyUp: (callback: () => void) => () => void;
       onDictationCancel: (callback: () => void) => () => void;

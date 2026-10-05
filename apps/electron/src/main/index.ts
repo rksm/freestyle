@@ -135,6 +135,7 @@ import {
 import { PanelRendererMessageQueue } from "./panel-renderer-message-queue";
 import {
   copySelectionFromFocusedApp,
+  isFreestyleWindow,
   isWaylandSession,
   pasteClipboardIntoFocusedApp,
   pasteIntoFocusedApp,
@@ -1096,7 +1097,8 @@ async function getFrontmostApp(): Promise<string | null> {
  */
 async function getFocusBridgeFrontmostApp(): Promise<string | null> {
   const focused = await queryFocusBridge();
-  if (!focused) return null;
+  // The pill can hold focus on GNOME; it is never a valid destination.
+  if (!focused || isFreestyleWindow(focused)) return null;
 
   const app =
     focused.wmClass ?? focused.app ?? focused.appId ?? focused.name ?? null;
@@ -1937,6 +1939,11 @@ app.whenReady().then(async () => {
 
   ipcMain.on("settings:audio-playback-mode-changed", () =>
     broadcastDictationPrefs(),
+  );
+
+  // The pill caches whether context is used; tell it when a page changes that.
+  ipcMain.on("settings:cleanup-context-changed", () =>
+    mainWindow?.webContents.send("settings:cleanup-context-changed"),
   );
 
   // IPC: fan out per-frame audio levels from the pill to other windows
@@ -3951,7 +3958,7 @@ function cancelActivePill(): void {
 
 // On GNOME Wayland the pill can take focus despite focusable:false, so the
 // destination app is read before the pill shows. A slow probe must not delay
-// the pill noticeably; it falls back to no context.
+// the pill noticeably; it falls back to a null context.
 const PRE_PILL_CONTEXT_TIMEOUT_MS = 250;
 // Capturing context makes hotkey:down async. Down and up share this chain so
 // the renderer still sees down before up.
@@ -3976,12 +3983,17 @@ function sendHotkeyDown(): void {
   dictationDeliveryTarget =
     panelComposerFocused && panelWindow?.isFocused() ? "panel-composer" : null;
   enqueueHotkeyIpc(async () => {
-    const appContext = await Promise.race([
-      getFrontmostApp(),
-      wait(PRE_PILL_CONTEXT_TIMEOUT_MS).then(() => null),
-    ]);
     // A press while the pill is still up (a re-record) continues its session.
-    if (!mainWindow?.isVisible() || pillOutputAbort.signal.aborted) {
+    // The visible pill may hold focus, so no probe: sending no context lets
+    // the renderer keep the destination from the earlier press.
+    const pillUp = Boolean(mainWindow?.isVisible());
+    const appContext = pillUp
+      ? undefined
+      : await Promise.race([
+          getFrontmostApp(),
+          wait(PRE_PILL_CONTEXT_TIMEOUT_MS).then(() => null),
+        ]);
+    if (!pillUp || pillOutputAbort.signal.aborted) {
       pillOutputAbort = new AbortController();
     }
     showPill();

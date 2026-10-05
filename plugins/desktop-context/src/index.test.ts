@@ -192,6 +192,19 @@ describe("desktop context plugin", () => {
     ]);
   });
 
+  it("ignores a focused Freestyle window", async () => {
+    queueExec(
+      gdbusTuple({ app: "freestyle", title: "pill", wmClass: "freestyle" }),
+    );
+
+    const snapshot = await resolve(
+      await configuredPlugin({ context_source_accessibility: "false" }),
+    );
+
+    expect(snapshot.app).toEqual({ name: "Unknown" });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to the VibeTyper FocusBridge payload shape", async () => {
     queueExec("", new Error("name unavailable"));
     queueExec(

@@ -80,7 +80,8 @@ vi.mock("./native-binary", () => ({
 const { spawn } = await import("node:child_process");
 const { tryEmacsInsert } = await import("./emacs-insert");
 const { queryFocusBridge } = await import("./focus-bridge");
-const { pasteIntoFocusedApp } = await import("./paste");
+const { isFreestyleWindow, pasteIntoFocusedApp } = await import("./paste");
+const { app } = await import("electron");
 
 const pill = { wmClass: "freestyle" };
 const editor = { wmClass: "gedit" };
@@ -232,5 +233,27 @@ describe("pasteIntoFocusedApp on Linux", () => {
     expect(spawn).not.toHaveBeenCalled();
     expect(queryFocusBridge).not.toHaveBeenCalled();
     expect(tryEmacsInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("isFreestyleWindow", () => {
+  // The electron mock's `app` is a plain object; its type marks isPackaged read-only.
+  const setPackaged = (isPackaged: boolean) =>
+    Object.assign(app, { isPackaged });
+
+  afterEach(() => setPackaged(false));
+
+  it("matches Freestyle by class, app or application id", () => {
+    expect(isFreestyleWindow({ wmClass: "freestyle" })).toBe(true);
+    expect(isFreestyleWindow({ app: "Freestyle.desktop" })).toBe(true);
+    expect(isFreestyleWindow({ gtkApplicationId: "com.freestyle" })).toBe(true);
+    expect(isFreestyleWindow({ wmClass: "gedit" })).toBe(false);
+  });
+
+  it("matches the dev binary only when not packaged", () => {
+    setPackaged(false);
+    expect(isFreestyleWindow({ wmClass: "Electron" })).toBe(true);
+    setPackaged(true);
+    expect(isFreestyleWindow({ wmClass: "Electron" })).toBe(false);
   });
 });
