@@ -12,7 +12,8 @@ export type AsrVocabularyBias =
   | { kind: "deepgram-keyterms"; terms: string[] }
   | { kind: "deepgram-keywords"; terms: string[] }
   | { kind: "elevenlabs-keyterms"; terms: string[] }
-  | { kind: "soniox-context"; terms: string[]; text?: string };
+  | { kind: "soniox-context"; terms: string[]; text?: string }
+  | { kind: "assemblyai-keyterms"; terms: string[] };
 
 const PROMPT_CHAR_BUDGET = 900;
 const DEEPGRAM_KEYTERM_MAX = 50;
@@ -31,6 +32,15 @@ const ELEVENLABS_BATCH_KEYTERM_MAX = 100;
 const ELEVENLABS_REALTIME_KEYTERM_MAX = 50;
 const ELEVENLABS_TERM_MAX_CHARS = 20;
 const ELEVENLABS_BATCH_TERM_MAX_CHARS = 50;
+/**
+ * AssemblyAI streaming takes at most 100 keyterms and ignores any term longer
+ * than 50 characters. Sync STT takes 100 terms and 8000 characters in total,
+ * which 100 terms of at most 50 characters always satisfy, so batch and
+ * streaming share one cap. Long terms are dropped, not cut: a cut identifier
+ * would bias recognition toward a wrong spelling.
+ */
+const ASSEMBLYAI_KEYTERM_MAX = 100;
+const ASSEMBLYAI_TERM_MAX_CHARS = 50;
 
 function capTerms(terms: string[], max: number): string[] {
   const seen = new Set<string>();
@@ -177,6 +187,14 @@ export function buildAsrVocabularyBias(
       const keyterms = capElevenLabsTerms(capped, max, maxChars);
       return keyterms.length > 0
         ? { kind: "elevenlabs-keyterms", terms: keyterms }
+        : null;
+    }
+    case "assemblyai": {
+      const keyterms = capped
+        .filter((t) => t.length <= ASSEMBLYAI_TERM_MAX_CHARS)
+        .slice(0, ASSEMBLYAI_KEYTERM_MAX);
+      return keyterms.length > 0
+        ? { kind: "assemblyai-keyterms", terms: keyterms }
         : null;
     }
     case "soniox":

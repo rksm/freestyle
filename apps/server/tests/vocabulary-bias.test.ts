@@ -203,6 +203,38 @@ describe("buildAsrVocabularyBias", () => {
     });
   });
 
+  describe("assemblyai", () => {
+    it.each([
+      true,
+      false,
+    ])("caps keyterms at 100 (streaming=%s)", (streaming) => {
+      const bias = buildAsrVocabularyBias(
+        "assemblyai",
+        "assemblyai/universal-3-6-pro",
+        terms(150),
+        streaming,
+      );
+      expect(bias).toEqual({
+        kind: "assemblyai-keyterms",
+        terms: terms(150).slice(0, 100),
+      });
+    });
+
+    it("drops terms longer than 50 characters instead of cutting them", () => {
+      const long = `apps/server/src/lib/streaming/providers/${"x".repeat(20)}`;
+      const bias = buildAsrVocabularyBias(
+        "assemblyai",
+        "assemblyai/universal-streaming-english",
+        ["Freestyle", long, "x".repeat(50)],
+        true,
+      );
+      expect(bias).toEqual({
+        kind: "assemblyai-keyterms",
+        terms: ["Freestyle", "x".repeat(50)],
+      });
+    });
+  });
+
   describe("elevenlabs", () => {
     it("uses keyterms for scribe_v2 batch requests", () => {
       const bias = buildAsrVocabularyBias(
