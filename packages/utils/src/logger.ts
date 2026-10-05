@@ -4,6 +4,14 @@ import winston from "winston";
 
 const isDev = process.env.NODE_ENV !== "production";
 
+/**
+ * Packaged builds log at `info`, which hides the debug lines that explain
+ * pipeline internals (paste backends, bias payloads, stage timings). Set
+ * `FREESTYLE_LOG_LEVEL=debug` when launching to surface them without a
+ * development build.
+ */
+const level = process.env.FREESTYLE_LOG_LEVEL || (isDev ? "debug" : "info");
+
 const LOG_FILE = "freestyle.log";
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB per file
 const MAX_FILES = 5; // keep ~10 MB of history (size-rotated, tailable)
@@ -54,7 +62,7 @@ function attachFileTransport(logger: winston.Logger, dir: string): void {
 
 export function createAppLogger(namespace: string): winston.Logger {
   const logger = winston.createLogger({
-    level: isDev ? "debug" : "info",
+    level,
     format: winston.format.combine(
       winston.format.timestamp({ format: "HH:mm:ss.SSS" }),
       winston.format.printf(({ timestamp, level, message }) => {
