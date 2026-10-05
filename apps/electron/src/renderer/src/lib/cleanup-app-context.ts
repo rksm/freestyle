@@ -11,45 +11,49 @@ import { getClient } from "./api";
 let cachedNeedsAppContext: boolean | null = null;
 
 /**
- * Synchronously read the last-derived "should we capture the frontmost app for
- * destination routing?" decision without touching the network. Returns `true`
- * conservatively until the cache has been primed (from a settings snapshot at
- * mount or a `cleanup-context-changed` refresh), so routing is never silently
- * skipped on a cold cache.
+ * Synchronously read the last-derived "should we capture the frontmost app?"
+ * decision without touching the network. Returns `true` conservatively until
+ * the cache has been primed (from a settings snapshot at mount or a
+ * `cleanup-context-changed` refresh), so context is never silently skipped on
+ * a cold cache.
  */
 export function getNeedsAppContextForCleanup(): boolean {
   return cachedNeedsAppContext ?? true;
 }
 
 /**
- * Derive (and cache) whether we should capture the frontmost app for
- * destination routing from an already-loaded settings snapshot. Lets callers
- * that have just fetched `/api/settings` avoid a second round-trip.
+ * Derive (and cache) whether we should capture the frontmost app, for context
+ * collection or for cleanup destination routing, from an already-loaded
+ * settings snapshot. Lets callers that have just fetched `/api/settings` avoid
+ * a second round-trip. Context collection is on unless its setting is
+ * "false"; cleanup routing needs the app only when cleanup tones are active.
  */
 export function applyNeedsAppContextForCleanup(
   settings: Record<string, string>,
 ): boolean {
-  if (settings[SETTINGS_KEYS.llmCleanup] !== "true") {
-    cachedNeedsAppContext = false;
-    return false;
-  }
+  const cleanupNeedsAppContext =
+    settings[SETTINGS_KEYS.llmCleanup] === "true" &&
+    !areAllCleanupTonesOff({
+      personalTone: parseCleanupPersonalTone(
+        settings[SETTINGS_KEYS.cleanupPersonalTone],
+      ),
+      workTone: parseCleanupWorkTone(settings[SETTINGS_KEYS.cleanupWorkTone]),
+      emailTone: parseCleanupEmailTone(
+        settings[SETTINGS_KEYS.cleanupEmailTone],
+      ),
+      overallTone: parseCleanupOverallTone(
+        settings[SETTINGS_KEYS.cleanupOverallTone],
+      ),
+    });
+  const contextEnabled = settings.context_enabled !== "false";
 
-  cachedNeedsAppContext = !areAllCleanupTonesOff({
-    personalTone: parseCleanupPersonalTone(
-      settings[SETTINGS_KEYS.cleanupPersonalTone],
-    ),
-    workTone: parseCleanupWorkTone(settings[SETTINGS_KEYS.cleanupWorkTone]),
-    emailTone: parseCleanupEmailTone(settings[SETTINGS_KEYS.cleanupEmailTone]),
-    overallTone: parseCleanupOverallTone(
-      settings[SETTINGS_KEYS.cleanupOverallTone],
-    ),
-  });
+  cachedNeedsAppContext = contextEnabled || cleanupNeedsAppContext;
   return cachedNeedsAppContext;
 }
 
 /**
- * Re-read cleanup tone settings and cache whether we should capture the
- * frontmost app for destination routing.
+ * Re-read server settings and cache whether we should capture the frontmost
+ * app.
  */
 export async function refreshNeedsAppContextForCleanup(): Promise<boolean> {
   try {
