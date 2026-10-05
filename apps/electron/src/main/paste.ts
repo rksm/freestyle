@@ -8,6 +8,8 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAppLogger } from "@freestyle-voice/utils";
 import { app, clipboard } from "electron";
+import { tryEmacsInsert } from "./emacs-insert";
+import { queryFocusBridge } from "./focus-bridge";
 import { isLinuxTerminalFocused } from "./linux-terminal-focus";
 import { getNativeBinaryPath } from "./native-binary";
 
@@ -349,6 +351,58 @@ async function pasteLinuxPortal(isTerminal: boolean): Promise<boolean> {
   }
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Upper bound on waiting for the compositor to move focus off the pill. */
+const FOCUS_RETURN_TIMEOUT_MS = 400;
+const FOCUS_POLL_INTERVAL_MS = 20;
+
+function isFreestyleWindow(window: {
+  app?: string;
+  wmClass?: string;
+  gtkApplicationId?: string;
+}): boolean {
+  const fields = [window.wmClass, window.app, window.gtkApplicationId];
+  return fields.some((value) => value && /freestyle/i.test(value));
+}
+
+/**
+ * Wayland has no "never focus me" surface hint, so on some compositors
+ * (notably GNOME) the dictation pill takes keyboard focus despite
+ * `focusable: false` + `showInactive()`. Hiding it hands focus back
+ * asynchronously — injecting the paste chord before that lands types into
+ * nothing, which is why pastes appeared to vanish intermittently.
+ *
+ * Poll the FocusBridge until the focused window is no longer ours. Returns
+ * immediately when focus is already elsewhere (the common case on
+ * compositors that honor the hint), and gives up after a bounded wait so a
+ * missing bridge only costs a short fixed delay.
+ */
+async function waitForFocusToLeavePill(): Promise<void> {
+  const deadline = Date.now() + FOCUS_RETURN_TIMEOUT_MS;
+  let sawBridge = false;
+
+  while (Date.now() < deadline) {
+    const focused = await queryFocusBridge();
+    if (focused) {
+      sawBridge = true;
+      if (!isFreestyleWindow(focused)) return;
+    } else if (!sawBridge) {
+      break;
+    }
+    // Otherwise the bridge answered before but reports nothing focused now;
+    // keep waiting for the compositor to settle on the next window.
+    await wait(FOCUS_POLL_INTERVAL_MS);
+  }
+
+  if (!sawBridge) {
+    // No bridge to observe focus with: fall back to a fixed settle delay.
+    await wait(FOCUS_POLL_INTERVAL_MS * 4);
+  }
+}
+
 async function pasteLinux(isTerminal: boolean): Promise<PasteMethod> {
   const binaryPath = getNativeBinaryPath("linux-fast-paste");
   const wayland = isWaylandSession();
@@ -661,6 +715,101 @@ async function doCopySelection(
 
 let pasteChain: Promise<void> = Promise.resolve();
 
+const WL_CLIPBOARD_TIMEOUT_MS = 1500;
+const WL_VERIFY_DEADLINE_MS = 400;
+
+function wlCopy(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "pipe"] });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("wl-copy timed out"));
+    }, WL_CLIPBOARD_TIMEOUT_MS);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    // wl-copy forks a child that keeps serving the selection; the parent
+    // exits promptly once the offer is registered.
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`wl-copy exited ${code}`));
+    });
+    child.stdin.end(text);
+  });
+}
+
+/**
+ * The Wayland clipboard as text, or null when it holds no text or wl-paste
+ * is unavailable. `--type text` makes a non-text clipboard (an image) read as
+ * null instead of as garbage that a later restore would write back as text.
+ */
+function wlPaste(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn("wl-paste", ["--no-newline", "--type", "text"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, WL_CLIPBOARD_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      out += chunk.toString("utf8");
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? out : null);
+    });
+  });
+}
+
+/**
+ * Put the transcript on the WAYLAND clipboard and wait until the compositor
+ * serves it back. Electron in the packaged AppImage runs via XWayland, and
+ * its X11 clipboard writes were not reliably bridged to the Wayland
+ * clipboard the target apps read — so every paste delivered stale clipboard
+ * content instead of the transcript. Writing through wl-copy talks to the
+ * compositor directly; the read-back verify closes any remaining
+ * propagation race before the paste chord is injected.
+ *
+ * Returns false when wl-copy failed, so the caller can use Electron's
+ * clipboard instead.
+ */
+async function setWaylandClipboardVerified(text: string): Promise<boolean> {
+  try {
+    await wlCopy(text);
+  } catch (err) {
+    log.warn(`wl-copy failed, falling back to Electron clipboard: ${err}`);
+    return false;
+  }
+  const deadline = Date.now() + WL_VERIFY_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if ((await wlPaste()) === text) return true;
+    await wait(20);
+  }
+  log.warn("wayland clipboard verify timed out; injecting anyway");
+  return true;
+}
+
+async function restoreWaylandClipboard(
+  prior: string | null,
+  transcript: string,
+): Promise<void> {
+  if (prior === null) return;
+  try {
+    if ((await wlPaste()) !== transcript) return;
+    await wlCopy(prior);
+  } catch {
+    // Best-effort: worst case the transcript stays on the clipboard.
+  }
+}
+
 export interface PasteOptions {
   /**
    * Append a space after the text. On by default, because a dictation is
@@ -698,13 +847,29 @@ async function doPasteIntoFocusedApp(
 
   if (options?.trailingSpace !== false) text = `${text} `;
 
+  // beforePaste hides the pill. It runs first because everything below asks
+  // which app is focused, and on GNOME the visible pill holds keyboard focus
+  // — any earlier query reports Freestyle itself.
+  await beforePaste?.();
+
+  const wayland = process.platform === "linux" && isWaylandSession();
+  if (wayland) {
+    await waitForFocusToLeavePill();
+    // Apps we can insert into programmatically skip the clipboard and the
+    // synthetic keystroke entirely.
+    if (await tryEmacsInsert(text)) {
+      log.debug("delivered via emacsclient");
+      return;
+    }
+  }
+
   const prior = snapshotClipboard();
-  clipboard.writeText(text);
+  const waylandPrior = wayland ? await wlPaste() : null;
+  const viaWayland = wayland && (await setWaylandClipboardVerified(text));
+  if (!viaWayland) clipboard.writeText(text);
 
   let pasted = false;
   try {
-    await beforePaste?.();
-
     let method: PasteMethod = "legacy";
     switch (process.platform) {
       case "darwin":
@@ -729,7 +894,11 @@ async function doPasteIntoFocusedApp(
     // When every paste backend failed, the clipboard is the only copy of the
     // transcript the user still has — leave it there instead of restoring.
     if (pasted) {
-      restoreClipboard(prior, text);
+      if (viaWayland) {
+        await restoreWaylandClipboard(waylandPrior, text);
+      } else {
+        restoreClipboard(prior, text);
+      }
     }
   }
 }
@@ -760,6 +929,7 @@ async function doPasteClipboard(): Promise<void> {
       method = await pasteWindows();
       break;
     default: {
+      if (isWaylandSession()) await waitForFocusToLeavePill();
       const isTerminal = await isLinuxTerminalFocused();
       method = await pasteLinux(isTerminal);
       break;
