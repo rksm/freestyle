@@ -163,6 +163,29 @@ export function settingsQueryOptions() {
 }
 
 /**
+ * Persist one setting and mirror it into the shared settings cache. The cache
+ * has a one-hour staleTime, so a page that remounts re-seeds its form from it;
+ * without the mirror, a saved value appears to revert. Throws on a non-2xx
+ * response, which the Hono client does not.
+ */
+export async function putSetting(
+  queryClient: QueryClient,
+  key: string,
+  value: string,
+): Promise<void> {
+  const res = await getClient().api.settings[":key"].$put({
+    param: { key },
+    json: { value },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to save setting "${key}" (${res.status})`);
+  }
+  queryClient.setQueryData<Record<string, string>>(queryKeys.settings, (old) =>
+    old ? { ...old, [key]: value } : old,
+  );
+}
+
+/**
  * Query options for the available-models catalog. Use with `useQuery`, or read
  * the shared cache from a handler via
  * `queryClient.ensureQueryData(availableModelsQueryOptions())`.

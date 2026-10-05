@@ -40,9 +40,13 @@ import {
 import { Textarea } from "@renderer/components/ui/textarea";
 import { usePersistentState } from "@renderer/hooks/use-persistent-state";
 import { getClient } from "@renderer/lib/api";
-import { queryKeys, settingsQueryOptions } from "@renderer/lib/query";
+import {
+  putSetting,
+  queryKeys,
+  settingsQueryOptions,
+} from "@renderer/lib/query";
 import { cn } from "@renderer/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -257,6 +261,7 @@ export default function TonePage(): React.JSX.Element {
 
   const customPromptDirty = cleanupCustomPrompt !== savedCleanupCustomPrompt;
 
+  const queryClient = useQueryClient();
   const settingsQuery = useQuery(settingsQueryOptions());
 
   const configuredQuery = useQuery({
@@ -316,23 +321,18 @@ export default function TonePage(): React.JSX.Element {
     );
   }, [settingsQuery.data]);
 
-  const saveSetting = useCallback(async (key: string, value: string) => {
-    // The Hono client does not throw on non-2xx — surface server rejections so
-    // callers' .catch handlers fire (and "Saved" state isn't shown on failure).
-    const res = await getClient().api.settings[":key"].$put({
-      param: { key },
-      json: { value },
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to save setting "${key}" (${res.status})`);
-    }
-    // Let the pill refresh its cached "needs frontmost app for routing" decision
-    // when a cleanup-relevant setting changes, so it doesn't re-fetch settings
-    // on every recording start.
-    if (CLEANUP_CONTEXT_KEYS.has(key)) {
-      window.api?.sendCleanupContextChanged?.();
-    }
-  }, []);
+  const saveSetting = useCallback(
+    async (key: string, value: string) => {
+      await putSetting(queryClient, key, value);
+      // Let the pill refresh its cached "needs frontmost app for routing" decision
+      // when a cleanup-relevant setting changes, so it doesn't re-fetch settings
+      // on every recording start.
+      if (CLEANUP_CONTEXT_KEYS.has(key)) {
+        window.api?.sendCleanupContextChanged?.();
+      }
+    },
+    [queryClient],
+  );
 
   const selectCleanupMode = useCallback(
     (next: CleanupCardValue) => {

@@ -8,6 +8,7 @@ import type {
 import { IS_MAC } from "@renderer/lib/platform";
 import {
   availableModelsQueryOptions,
+  putSetting,
   queryKeys,
   settingsQueryOptions,
 } from "@renderer/lib/query";
@@ -652,11 +653,7 @@ export function useModels(): UseModels {
       setLlmCleanup(next);
       void (async () => {
         try {
-          const response = await getClient().api.settings[":key"].$put({
-            param: { key: SETTINGS_KEYS.llmCleanup },
-            json: { value: String(next) },
-          });
-          await requireOk(response, "Could not save cleanup preference.");
+          await putSetting(queryClient, SETTINGS_KEYS.llmCleanup, String(next));
           // Toggling cleanup changes whether the pill needs the frontmost app
           // for routing — notify it to refresh its cached decision.
           window.api?.sendCleanupContextChanged?.();
@@ -666,7 +663,7 @@ export function useModels(): UseModels {
         }
       })();
     },
-    [llmCleanup],
+    [llmCleanup, queryClient],
   );
 
   // Persist the MLX keep-alive window. At 0 ("cold start") also stop the
@@ -678,11 +675,11 @@ export function useModels(): UseModels {
       setMlxKeepAliveMinutes(next);
       void (async () => {
         try {
-          const response = await getClient().api.settings[":key"].$put({
-            param: { key: SETTINGS_KEYS.mlxAsrKeepAliveMinutes },
-            json: { value: String(next) },
-          });
-          await requireOk(response, "Could not save MLX ASR keep-alive.");
+          await putSetting(
+            queryClient,
+            SETTINGS_KEYS.mlxAsrKeepAliveMinutes,
+            String(next),
+          );
           if (next !== 0) return;
           const stopResponse =
             await getClient().api["mlx-asr"].server.stop.$post();
@@ -693,7 +690,7 @@ export function useModels(): UseModels {
         }
       })();
     },
-    [mlxKeepAliveMinutes],
+    [mlxKeepAliveMinutes, queryClient],
   );
 
   const deleteProvider = useCallback(

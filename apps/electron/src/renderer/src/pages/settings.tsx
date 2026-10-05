@@ -46,7 +46,11 @@ import {
 } from "@renderer/lib/api";
 import { requestMicAccess, resolveMicStatus } from "@renderer/lib/permissions";
 import { IS_LINUX, IS_MAC, IS_WINDOWS } from "@renderer/lib/platform";
-import { queryKeys, settingsQueryOptions } from "@renderer/lib/query";
+import {
+  putSetting,
+  queryKeys,
+  settingsQueryOptions,
+} from "@renderer/lib/query";
 import { cn } from "@renderer/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -303,26 +307,33 @@ export default function SettingsPage(): React.JSX.Element {
     }, 30000);
   }, []);
 
-  const handleHotkeyModeChange = useCallback((mode: "hold" | "toggle") => {
-    setHotkeyMode(mode);
-    window.api?.setHotkeyMode?.(mode);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.hotkeyMode },
-        json: { value: mode },
-      })
-      .catch(() => {});
-  }, []);
+  const queryClient = useQueryClient();
 
-  const handleHotkeyRecorded = useCallback((accelerator: string) => {
-    setHotkey(accelerator);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.hotkey },
-        json: { value: accelerator },
-      })
-      .catch(() => {});
-  }, []);
+  // Fire-and-forget save that also keeps the shared settings cache current, so
+  // remounting the page re-seeds from saved values.
+  const persist = useCallback(
+    (key: string, value: string) => {
+      putSetting(queryClient, key, value).catch(() => {});
+    },
+    [queryClient],
+  );
+
+  const handleHotkeyModeChange = useCallback(
+    (mode: "hold" | "toggle") => {
+      setHotkeyMode(mode);
+      window.api?.setHotkeyMode?.(mode);
+      persist(SETTINGS_KEYS.hotkeyMode, mode);
+    },
+    [persist],
+  );
+
+  const handleHotkeyRecorded = useCallback(
+    (accelerator: string) => {
+      setHotkey(accelerator);
+      persist(SETTINGS_KEYS.hotkey, accelerator);
+    },
+    [persist],
+  );
 
   const {
     state: recorderState,
@@ -335,8 +346,6 @@ export default function SettingsPage(): React.JSX.Element {
     startRecording: startHotkeyRecording,
     cancelRecording: cancelHotkeyRecording,
   } = useHotkeyRecorder(handleHotkeyRecorded);
-
-  const queryClient = useQueryClient();
 
   // All persisted settings in one request (replaces ~10 individual GETs).
   const settingsQuery = useQuery(settingsQueryOptions());
@@ -447,82 +456,64 @@ export default function SettingsPage(): React.JSX.Element {
     };
   }, [checkPermissions]);
 
-  const handleDeviceChange = useCallback((deviceId: string) => {
-    setSelectedDevice(deviceId);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.micDeviceId },
-        json: { value: deviceId },
-      })
-      .catch(() => {});
-  }, []);
+  const handleDeviceChange = useCallback(
+    (deviceId: string) => {
+      setSelectedDevice(deviceId);
+      persist(SETTINGS_KEYS.micDeviceId, deviceId);
+    },
+    [persist],
+  );
 
   const handleThemeChange = useCallback(
     (value: string) => {
       setTheme(value);
-      getClient()
-        .api.settings[":key"].$put({
-          param: { key: LEGACY_SETTING_KEYS.theme },
-          json: { value },
-        })
-        .catch(() => {});
+      persist(LEGACY_SETTING_KEYS.theme, value);
     },
-    [setTheme],
+    [setTheme, persist],
   );
 
-  const persistTranslateMode = useCallback((value: boolean) => {
-    setTranslateMode(value);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.translateMode },
-        json: { value: String(value) },
-      })
-      .catch(() => {});
-  }, []);
+  const persistTranslateMode = useCallback(
+    (value: boolean) => {
+      setTranslateMode(value);
+      persist(SETTINGS_KEYS.translateMode, String(value));
+    },
+    [persist],
+  );
 
   const handleLanguagesChange = useCallback(
     (next: string[]) => {
       const normalized = normalizeLanguageList(next);
       setLanguages(normalized);
-      getClient()
-        .api.settings[":key"].$put({
-          param: { key: SETTINGS_KEYS.languages },
-          json: { value: JSON.stringify(normalized) },
-        })
-        .catch(() => {});
+      persist(SETTINGS_KEYS.languages, JSON.stringify(normalized));
       // Translate mode requires exactly one language; disable it otherwise.
       if (normalized.length !== 1 && translateMode) persistTranslateMode(false);
     },
-    [translateMode, persistTranslateMode],
+    [translateMode, persistTranslateMode, persist],
   );
 
-  const handleOutputModeChange = useCallback((value: string) => {
-    setOutputMode(value);
-    window.api?.sendOutputModeChanged?.(value);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.outputMode },
-        json: { value },
-      })
-      .catch(() => {});
-  }, []);
+  const handleOutputModeChange = useCallback(
+    (value: string) => {
+      setOutputMode(value);
+      window.api?.sendOutputModeChanged?.(value);
+      persist(SETTINGS_KEYS.outputMode, value);
+    },
+    [persist],
+  );
 
   const handlePillPositionChange = useCallback((value: string) => {
     setPillPosition(value);
     window.api?.setPillPosition?.(value);
   }, []);
 
-  const handlePillCancelChange = useCallback((value: string) => {
-    const mode = normalizePillCancelMode(value);
-    setPillCancel(mode);
-    window.api?.sendPillCancelModeChanged?.(mode);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: LEGACY_SETTING_KEYS.pillCancelButton },
-        json: { value: mode },
-      })
-      .catch(() => {});
-  }, []);
+  const handlePillCancelChange = useCallback(
+    (value: string) => {
+      const mode = normalizePillCancelMode(value);
+      setPillCancel(mode);
+      window.api?.sendPillCancelModeChanged?.(mode);
+      persist(LEGACY_SETTING_KEYS.pillCancelButton, mode);
+    },
+    [persist],
+  );
 
   const handleAutoUpdateToggle = useCallback((enabled: boolean) => {
     setAutoUpdate(enabled);
@@ -547,34 +538,28 @@ export default function SettingsPage(): React.JSX.Element {
     void queryClient.invalidateQueries({ queryKey: queryKeys.history.all });
   }, [t, queryClient]);
 
-  const handleSoundToggle = useCallback((enabled: boolean) => {
-    setSoundEnabled(enabled);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.soundEnabled },
-        json: { value: String(enabled) },
-      })
-      .catch(() => {});
-  }, []);
+  const handleSoundToggle = useCallback(
+    (enabled: boolean) => {
+      setSoundEnabled(enabled);
+      persist(SETTINGS_KEYS.soundEnabled, String(enabled));
+    },
+    [persist],
+  );
 
-  const handleHistoryPausedToggle = useCallback((paused: boolean) => {
-    setHistoryPaused(paused);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.historyPaused },
-        json: { value: String(paused) },
-      })
-      .catch(() => {});
-  }, []);
+  const handleHistoryPausedToggle = useCallback(
+    (paused: boolean) => {
+      setHistoryPaused(paused);
+      persist(SETTINGS_KEYS.historyPaused, String(paused));
+    },
+    [persist],
+  );
 
-  const saveHistoryRetention = useCallback((days: string) => {
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: SETTINGS_KEYS.historyRetentionDays },
-        json: { value: days },
-      })
-      .catch(() => {});
-  }, []);
+  const saveHistoryRetention = useCallback(
+    (days: string) => {
+      persist(SETTINGS_KEYS.historyRetentionDays, days);
+    },
+    [persist],
+  );
 
   const handleHistoryRetentionChange = useCallback(
     (value: string) => {
@@ -608,23 +593,16 @@ export default function SettingsPage(): React.JSX.Element {
     [saveHistoryRetention],
   );
 
-  const handleAudioPlaybackModeChange = useCallback((value: string) => {
-    const mode = normalizeAudioPlaybackMode(value);
-    setAudioPlaybackMode(mode);
-    window.api?.sendAudioPlaybackModeChanged?.(mode);
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: "audio_playback_mode" },
-        json: { value: mode },
-      })
-      .catch(() => {});
-    getClient()
-      .api.settings[":key"].$put({
-        param: { key: "audio_ducking_enabled" },
-        json: { value: String(mode === "duck") },
-      })
-      .catch(() => {});
-  }, []);
+  const handleAudioPlaybackModeChange = useCallback(
+    (value: string) => {
+      const mode = normalizeAudioPlaybackMode(value);
+      setAudioPlaybackMode(mode);
+      window.api?.sendAudioPlaybackModeChanged?.(mode);
+      persist("audio_playback_mode", mode);
+      persist("audio_ducking_enabled", String(mode === "duck"));
+    },
+    [persist],
+  );
 
   // Build display keys for current recorder state
   const liveKeys = liveModifiers.map(keyDisplayLabel);
