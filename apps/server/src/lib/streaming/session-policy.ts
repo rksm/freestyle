@@ -6,7 +6,15 @@
  * Cloud sessions are also ephemeral: the upstream closes after each
  * transcription and reconnects on the next `start` (hotkey-down), which
  * gives a natural pre-warm window while the user is still speaking.
+ * AssemblyAI bills a session by wall-clock time, idle included, and ends each
+ * recording with Terminate, so its sessions are ephemeral too.
  */
+const EPHEMERAL_PROVIDERS = new Set([
+  "soniox",
+  "freestyle-cloud",
+  "assemblyai",
+]);
+
 export function shouldKeepStreamingUpstreamAlive(providerId: string): boolean {
-  return providerId !== "soniox" && providerId !== "freestyle-cloud";
+  return !EPHEMERAL_PROVIDERS.has(providerId);
 }

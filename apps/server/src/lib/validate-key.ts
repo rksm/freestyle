@@ -106,6 +106,21 @@ async function validateElevenLabs(apiKey: string): Promise<ValidationResult> {
   return { valid: false, error: `ElevenLabs returned HTTP ${res.status}.` };
 }
 
+async function validateAssemblyAI(apiKey: string): Promise<ValidationResult> {
+  // Listing one transcript is read-only and creates no billable work.
+  const res = await fetch("https://api.assemblyai.com/v2/transcript?limit=1", {
+    headers: { Authorization: apiKey },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.ok) return { valid: true };
+  if (res.status === 401)
+    return {
+      valid: false,
+      error: "Invalid API key. Please check and try again.",
+    };
+  return { valid: false, error: `AssemblyAI returned HTTP ${res.status}.` };
+}
+
 async function validateAnthropic(apiKey: string): Promise<ValidationResult> {
   const res = await fetch("https://api.anthropic.com/v1/models", {
     headers: {
@@ -193,6 +208,7 @@ const LIVE_VALIDATORS: Record<
   groq: validateGroq,
   deepgram: validateDeepgram,
   elevenlabs: validateElevenLabs,
+  assemblyai: validateAssemblyAI,
   anthropic: validateAnthropic,
   google: validateGoogle,
   mistral: validateMistral,

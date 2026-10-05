@@ -1,3 +1,4 @@
+import { AssemblyAITranscriptionProvider } from "./providers/assemblyai.js";
 import { DeepgramTranscriptionProvider } from "./providers/deepgram.js";
 import { ElevenLabsTranscriptionProvider } from "./providers/elevenlabs.js";
 import { FreestyleCloudTranscriptionProvider } from "./providers/freestyle-cloud.js";
@@ -15,6 +16,7 @@ const providers: TranscriptionProvider[] = [
   new ElevenLabsTranscriptionProvider(),
   new GroqTranscriptionProvider(),
   new SonioxTranscriptionProvider(),
+  new AssemblyAITranscriptionProvider(),
   new WhisperLocalTranscriptionProvider(),
   new MlxLocalTranscriptionProvider(),
 ];
