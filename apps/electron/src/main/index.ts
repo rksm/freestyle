@@ -1699,12 +1699,6 @@ function rebuildMenus(): void {
     },
   ]);
   Menu.setApplicationMenu(appMenu);
-
-  // On Linux the tray menu is static (setContextMenu), so rebuild it
-  // when update state changes. macOS/Windows rebuild on every right-click.
-  if (process.platform === "linux") {
-    tray?.setContextMenu(buildTrayContextMenu());
-  }
 }
 
 // Prevent multiple instances.  If another instance already holds the lock,
