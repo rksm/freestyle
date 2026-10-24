@@ -127,6 +127,7 @@ declare global {
       onHotkeyRecordReleased: (callback: () => void) => () => void;
       onHotkeyRecordCancel: (callback: () => void) => () => void;
       getAppVersion: () => Promise<string>;
+      quitApp: () => void;
       // Launch at startup setting
       getLaunchAtStartup: () => Promise<boolean>;
       setLaunchAtStartup: (enabled: boolean) => void;

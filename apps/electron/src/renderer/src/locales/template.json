@@ -685,7 +685,8 @@
       "settings": "Settings",
       "help": "Help",
       "remix": "Remix"
-    }
+    },
+    "quit": "Quit Freestyle"
   },
   "plugins": {
     "titleAccent": "Plugins",

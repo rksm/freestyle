@@ -31,6 +31,7 @@ import {
   Paintbrush,
   PanelLeftClose,
   PanelLeftOpen,
+  Power,
   Puzzle,
   Search,
   Settings,
@@ -528,6 +529,16 @@ export default function AppShell(): React.JSX.Element {
                   style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
                 >
                   <NavList items={footerNav} />
+                  <div className="px-3 pt-px">
+                    <button
+                      type="button"
+                      onClick={() => window.api.quitApp()}
+                      className="text-secondary-foreground/80 hover:bg-card/50 flex w-full items-center gap-2.5 rounded-[7px] border border-transparent px-2.5 py-1.5 text-left text-[13px] transition-colors"
+                    >
+                      <Power size={14} className="text-muted-foreground" />
+                      <span className="flex-1 truncate">{t("shell.quit")}</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="h-3" />
               </>

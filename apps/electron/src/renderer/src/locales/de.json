@@ -559,7 +559,8 @@
       "settings": "Einstellungen",
       "help": "Hilfe",
       "remix": "Remix"
-    }
+    },
+    "quit": "Freestyle beenden"
   },
   "remixPage": {
     "stats": {

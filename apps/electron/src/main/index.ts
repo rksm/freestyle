@@ -2179,6 +2179,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("app:version", () => app.getVersion());
 
+  // Same path as the tray's Quit item: "before-quit" stops the native
+  // helpers, the local server, and the database before the process exits.
+  ipcMain.on("app:quit", () => app.quit());
+
   // -- Launch at startup setting IPC --
   ipcMain.handle("settings:launch-at-startup", () => {
     if (process.platform === "linux") return linuxAutostart.isEnabled();
