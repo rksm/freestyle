@@ -559,7 +559,8 @@
       "settings": "設定",
       "help": "ヘルプ",
       "remix": "Remix"
-    }
+    },
+    "quit": "Freestyleを終了"
   },
   "remixPage": {
     "stats": {

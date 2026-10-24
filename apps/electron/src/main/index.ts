@@ -1699,12 +1699,6 @@ function rebuildMenus(): void {
     },
   ]);
   Menu.setApplicationMenu(appMenu);
-
-  // On Linux the tray menu is static (setContextMenu), so rebuild it
-  // when update state changes. macOS/Windows rebuild on every right-click.
-  if (process.platform === "linux") {
-    tray?.setContextMenu(buildTrayContextMenu());
-  }
 }
 
 // Prevent multiple instances.  If another instance already holds the lock,
@@ -2178,6 +2172,10 @@ app.whenReady().then(async () => {
   createTray();
 
   ipcMain.handle("app:version", () => app.getVersion());
+
+  // Same path as the tray's Quit item: "before-quit" stops the native
+  // helpers, the local server, and the database before the process exits.
+  ipcMain.on("app:quit", () => app.quit());
 
   // -- Launch at startup setting IPC --
   ipcMain.handle("settings:launch-at-startup", () => {

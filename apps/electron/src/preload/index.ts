@@ -461,6 +461,7 @@ const api = {
     return () => ipcRenderer.removeListener("hotkey-record:cancel", handler);
   },
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
+  quitApp: (): void => ipcRenderer.send("app:quit"),
   // Launch at startup setting
   getLaunchAtStartup: (): Promise<boolean> =>
     ipcRenderer.invoke("settings:launch-at-startup"),
