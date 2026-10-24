@@ -188,7 +188,6 @@ export default function SettingsPage(): React.JSX.Element {
   const [customRetentionDays, setCustomRetentionDays] = useState("90");
   const [audioPlaybackMode, setAudioPlaybackMode] =
     useState<AudioPlaybackMode>("off");
-  const [autoUpdate, setAutoUpdate] = useState(true);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
   const [showOnLaunch, setShowOnLaunch] = useState(true);
   const activeSection = parseSettingsSection(section);
@@ -437,11 +436,6 @@ export default function SettingsPage(): React.JSX.Element {
       ?.getPillPosition()
       .then((pos) => setPillPosition(normalizePillPos(pos)))
       .catch(() => {});
-    // Auto-update setting
-    window.api
-      ?.getAutoUpdate()
-      .then((v) => setAutoUpdate(v))
-      .catch(() => {});
 
     // Launch at startup setting
     window.api
@@ -528,11 +522,6 @@ export default function SettingsPage(): React.JSX.Element {
     },
     [persist],
   );
-
-  const handleAutoUpdateToggle = useCallback((enabled: boolean) => {
-    setAutoUpdate(enabled);
-    window.api?.setAutoUpdate?.(enabled);
-  }, []);
 
   const handleLaunchAtStartupToggle = useCallback((enabled: boolean) => {
     setLaunchAtStartup(enabled);
@@ -698,15 +687,6 @@ export default function SettingsPage(): React.JSX.Element {
                   desc={t("settings.interfaceLanguage.desc")}
                 >
                   <LanguageSelector />
-                </Row>
-                <Row
-                  label={t("settings.application.autoUpdate")}
-                  desc={t("settings.application.autoUpdateDesc")}
-                >
-                  <Switch
-                    checked={autoUpdate}
-                    onCheckedChange={handleAutoUpdateToggle}
-                  />
                 </Row>
                 <Row
                   label={t("settings.application.launchAtStartup")}

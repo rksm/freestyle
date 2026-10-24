@@ -12,10 +12,7 @@
     "openSettings": "Einstellungen öffnen",
     "recheck": "Erneut prüfen",
     "manage": "Verwalten",
-    "download": "Herunterladen",
-    "downloading": "Wird heruntergeladen...",
-    "saving": "Wird gespeichert…",
-    "restartAndUpdate": "Neu starten und aktualisieren"
+    "saving": "Wird gespeichert…"
   },
   "languageNames": {
     "en": "English",
@@ -116,8 +113,6 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "updateAvailable": "Version {{version}} verfügbar",
-    "updateReady": "Version {{version}} installationsbereit",
     "interfaceLanguage": {
       "label": "Oberflächensprache",
       "desc": "Ändert die Sprache der App-Oberfläche."
@@ -133,8 +128,6 @@
       "remix": "Remix"
     },
     "application": {
-      "autoUpdate": "Automatische Updates",
-      "autoUpdateDesc": "Neue Versionen werden im Hintergrund heruntergeladen, sobald sie verfügbar sind.",
       "launchAtStartup": "Beim Start ausführen",
       "launchAtStartupDesc": "Freestyle automatisch starten, wenn Sie sich an Ihrem Computer anmelden.",
       "showOnLaunch": "Dashboard beim Start anzeigen",

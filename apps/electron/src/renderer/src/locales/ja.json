@@ -12,10 +12,7 @@
     "openSettings": "設定を開く",
     "recheck": "再確認",
     "manage": "管理",
-    "download": "ダウンロード",
-    "downloading": "ダウンロード中...",
-    "saving": "保存中...",
-    "restartAndUpdate": "再起動して更新"
+    "saving": "保存中..."
   },
   "languageNames": {
     "en": "English",
@@ -116,8 +113,6 @@
   },
   "settings": {
     "title": "設定",
-    "updateAvailable": "バージョン {{version}} が利用可能です",
-    "updateReady": "バージョン {{version}} のインストール準備ができました",
     "interfaceLanguage": {
       "label": "インターフェース言語",
       "desc": "アプリのインターフェース表示言語を変更します。"
@@ -133,8 +128,6 @@
       "remix": "Remix"
     },
     "application": {
-      "autoUpdate": "自動アップデート",
-      "autoUpdateDesc": "新しいバージョンがリリースされた際、バックグラウンドで自動的にダウンロードします。",
       "launchAtStartup": "システム起動時に起動",
       "launchAtStartupDesc": "コンピューターにログインした際、自動的に Freestyle を起動します。",
       "showOnLaunch": "起動時にダッシュボードを表示",

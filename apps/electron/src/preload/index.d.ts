@@ -127,26 +127,6 @@ declare global {
       onHotkeyRecordReleased: (callback: () => void) => () => void;
       onHotkeyRecordCancel: (callback: () => void) => () => void;
       getAppVersion: () => Promise<string>;
-      // Auto-updater
-      checkForUpdate: () => Promise<{
-        version: string;
-        downloadState: string;
-      } | null>;
-      downloadUpdate: () => void;
-      installUpdate: () => void;
-      getUpdateStatus: () => Promise<{
-        version: string | null;
-        downloadState: "idle" | "downloading" | "downloaded";
-      }>;
-      onUpdateStatus: (
-        callback: (status: {
-          version: string | null;
-          downloadState: "idle" | "downloading" | "downloaded";
-        }) => void,
-      ) => () => void;
-      // Auto-update setting
-      getAutoUpdate: () => Promise<boolean>;
-      setAutoUpdate: (enabled: boolean) => void;
       // Launch at startup setting
       getLaunchAtStartup: () => Promise<boolean>;
       setLaunchAtStartup: (enabled: boolean) => void;

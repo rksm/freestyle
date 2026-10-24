@@ -12,10 +12,7 @@
     "openSettings": "Open Settings",
     "recheck": "Re-check",
     "manage": "Manage",
-    "download": "Download",
-    "downloading": "Downloading...",
     "saving": "Saving…",
-    "restartAndUpdate": "Restart & Update",
     "noResults": "No results found"
   },
   "languageNames": {
@@ -136,8 +133,6 @@
   },
   "settings": {
     "title": "Settings",
-    "updateAvailable": "Version {{version}} available",
-    "updateReady": "Version {{version}} ready to install",
     "interfaceLanguage": {
       "label": "Interface language",
       "desc": "Change the language of the app interface."
@@ -155,8 +150,6 @@
       "remix": "Remix"
     },
     "application": {
-      "autoUpdate": "Automatic updates",
-      "autoUpdateDesc": "Download new versions in the background as soon as they ship.",
       "launchAtStartup": "Launch at startup",
       "launchAtStartupDesc": "Automatically start Freestyle when you log in to your computer.",
       "showOnLaunch": "Show dashboard on launch",

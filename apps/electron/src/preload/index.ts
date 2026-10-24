@@ -461,38 +461,6 @@ const api = {
     return () => ipcRenderer.removeListener("hotkey-record:cancel", handler);
   },
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
-  // Auto-updater
-  checkForUpdate: (): Promise<{
-    version: string;
-    downloadState: string;
-  } | null> => ipcRenderer.invoke("updater:check"),
-  downloadUpdate: (): void => ipcRenderer.send("updater:download"),
-  installUpdate: (): void => ipcRenderer.send("updater:install"),
-  getUpdateStatus: (): Promise<{
-    version: string | null;
-    downloadState: "idle" | "downloading" | "downloaded";
-  }> => ipcRenderer.invoke("updater:status"),
-  onUpdateStatus: (
-    callback: (status: {
-      version: string | null;
-      downloadState: "idle" | "downloading" | "downloaded";
-    }) => void,
-  ): (() => void) => {
-    const handler = (
-      _e: unknown,
-      status: {
-        version: string | null;
-        downloadState: "idle" | "downloading" | "downloaded";
-      },
-    ): void => callback(status);
-    ipcRenderer.on("updater:status", handler);
-    return () => ipcRenderer.removeListener("updater:status", handler);
-  },
-  // Auto-update setting
-  getAutoUpdate: (): Promise<boolean> =>
-    ipcRenderer.invoke("settings:auto-update"),
-  setAutoUpdate: (enabled: boolean): void =>
-    ipcRenderer.send("settings:set-auto-update", enabled),
   // Launch at startup setting
   getLaunchAtStartup: (): Promise<boolean> =>
     ipcRenderer.invoke("settings:launch-at-startup"),

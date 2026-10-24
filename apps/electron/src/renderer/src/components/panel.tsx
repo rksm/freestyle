@@ -1087,19 +1087,6 @@ function PanelInner({
     if (narrowRemix) setNarrowContextOpen(false);
   }, [narrowRemix]);
 
-  const [updateStatus, setUpdateStatus] = useState<{
-    version: string | null;
-    downloadState: "idle" | "downloading" | "downloaded";
-  }>({ version: null, downloadState: "idle" });
-
-  useEffect(() => {
-    void window.api
-      .getUpdateStatus()
-      .then(setUpdateStatus)
-      .catch(() => {});
-    const offUpdate = window.api.onUpdateStatus(setUpdateStatus);
-    return () => offUpdate?.();
-  }, []);
   const [draft, setDraft] = useState("");
 
   const [notice, setNotice] = useState<string | null>(null);
@@ -1663,35 +1650,6 @@ function PanelInner({
         <div className="tavern-head tavern-workspace-head">
           <span className="tavern-head-name">Remix</span>
           <span className="tavern-head-spacer" />
-          {updateStatus.version ? (
-            <button
-              type="button"
-              className={`tavern-head-update${
-                updateStatus.downloadState === "downloaded" ? " is-ready" : ""
-              }`}
-              title={
-                updateStatus.downloadState === "downloaded"
-                  ? `Version ${updateStatus.version} is ready — restart to update`
-                  : updateStatus.downloadState === "downloading"
-                    ? `Version ${updateStatus.version} is downloading`
-                    : `Version ${updateStatus.version} is available`
-              }
-              disabled={updateStatus.downloadState === "downloading"}
-              onClick={() => {
-                if (updateStatus.downloadState === "downloaded") {
-                  window.api.installUpdate();
-                } else {
-                  window.api.downloadUpdate();
-                }
-              }}
-            >
-              {updateStatus.downloadState === "downloaded"
-                ? "Restart to update"
-                : updateStatus.downloadState === "downloading"
-                  ? "Downloading…"
-                  : "Update"}
-            </button>
-          ) : null}
           <button
             type="button"
             className="tavern-workspace-icon-btn"

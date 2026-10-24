@@ -1,7 +1,6 @@
 import "./shell.css";
 
 import { Badge } from "@renderer/components/ui/badge";
-import { UpdateBanner } from "@renderer/components/update-banner";
 import { usePersistentState } from "@renderer/hooks/use-persistent-state";
 import { IS_MAC, MOD_LABEL } from "@renderer/lib/platform";
 import { listPlugins } from "@renderer/lib/plugins-api";
@@ -547,7 +546,6 @@ export default function AppShell(): React.JSX.Element {
           onShowSidebar={showSidebar}
           sidebarRevealRef={sidebarRevealRef}
         />
-        <UpdateBanner className="relative z-50 mt-4 w-[calc(100%-3rem)] max-w-2xl self-center" />
 
         <main
           className="flex min-h-0 flex-1 flex-col overflow-hidden"

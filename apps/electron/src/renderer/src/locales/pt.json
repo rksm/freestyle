@@ -12,10 +12,7 @@
     "openSettings": "Abrir Configurações",
     "recheck": "Verificar Novamente",
     "manage": "Gerenciar",
-    "download": "Baixar",
-    "downloading": "Baixando...",
-    "saving": "Salvando...",
-    "restartAndUpdate": "Reiniciar e Atualizar"
+    "saving": "Salvando..."
   },
   "languageNames": {
     "en": "Inglês",
@@ -116,8 +113,6 @@
   },
   "settings": {
     "title": "Configurações",
-    "updateAvailable": "Versão {{version}} disponível",
-    "updateReady": "Versão {{version}} pronta para instalar",
     "interfaceLanguage": {
       "label": "Idioma da interface",
       "desc": "Alterar o idioma da interface do aplicativo."
@@ -133,8 +128,6 @@
       "remix": "Remix"
     },
     "application": {
-      "autoUpdate": "Atualizações automáticas",
-      "autoUpdateDesc": "Baixar novas versões em segundo plano assim que forem lançadas.",
       "launchAtStartup": "Iniciar com o sistema",
       "launchAtStartupDesc": "Iniciar automaticamente o Freestyle quando você entrar no computador.",
       "showOnLaunch": "Mostrar painel ao iniciar",

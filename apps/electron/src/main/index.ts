@@ -44,7 +44,7 @@ if (process.env.NODE_ENV !== "production") {
 
 import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import {
@@ -78,7 +78,6 @@ import {
   systemPreferences,
   Tray,
 } from "electron";
-import { autoUpdater } from "electron-updater";
 import { hc } from "hono/client";
 import icon from "../../resources/icon.png?asset";
 import trayIconPath from "../../resources/tray/logoTemplate.png?asset";
@@ -315,7 +314,7 @@ function setPillHotRect(rect: PillHotRect | null): void {
 // ---------------------------------------------------------------------------
 // settings.json helpers — single source for read/write of the lightweight
 // JSON file the main process uses for settings it needs before the server
-// is available (pillPosition, onboardingComplete, autoUpdate).
+// is available (pillPosition, onboardingComplete).
 // ---------------------------------------------------------------------------
 
 let settingsCache: Record<string, unknown> | null = null;
@@ -464,14 +463,6 @@ function broadcastServerChanged(): void {
   panelWindow?.webContents.send("server:changed");
   notificationWindow()?.webContents.send("server:changed");
   invalidatePluginViews();
-}
-
-function broadcastUpdateStatus(): void {
-  const status = {
-    version: updateAvailableVersion,
-    downloadState: updateDownloadState,
-  };
-  panelWindow?.webContents.send("updater:status", status);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1575,119 +1566,6 @@ function showRequiredPermissionDialog(
   return permissionDialogPromise;
 }
 
-function isRunningFromReadOnlyLocation(): boolean {
-  if (process.platform !== "darwin") return false;
-  const exePath = app.getPath("exe");
-  if (
-    exePath.startsWith("/Volumes/") ||
-    exePath.includes("/AppTranslocation/")
-  ) {
-    return true;
-  }
-  try {
-    const { accessSync, constants } = require("node:fs");
-    accessSync(dirname(exePath), constants.W_OK);
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-const READ_ONLY_UPDATE_RE = /EROFS|EACCES|read[- ]only|permission denied/i;
-
-let readOnlyDialogShown = false;
-
-function showMoveToApplicationsDialog(): void {
-  if (readOnlyDialogShown) return;
-  readOnlyDialogShown = true;
-  dialog.showMessageBox({
-    type: "warning",
-    title: "Move to Applications",
-    message:
-      "Freestyle is running from a read-only location and can\u2019t update itself.",
-    detail:
-      "Please drag Freestyle into your Applications folder and relaunch it from there.",
-    buttons: ["OK"],
-  });
-}
-
-function restartAndUpdate(): void {
-  isUpdaterQuitting = true;
-  autoUpdater.quitAndInstall();
-}
-
-/** Mark state as downloading, notify the settings window, and kick off the download. */
-function triggerDownloadUpdate(): void {
-  updateDownloadState = "downloading";
-  broadcastUpdateStatus();
-  autoUpdater.downloadUpdate().catch((err) => {
-    log.warn(`downloadUpdate rejected: ${err}`);
-  });
-}
-
-async function checkForUpdatesFromMenu(): Promise<void> {
-  if (is.dev) {
-    dialog.showMessageBox({
-      type: "info",
-      title: "Check for Updates",
-      message: "Update checking is not available in development mode.",
-    });
-    return;
-  }
-  if (isRunningFromReadOnlyLocation()) {
-    showMoveToApplicationsDialog();
-    return;
-  }
-  if (updateDownloadState === "downloaded") {
-    restartAndUpdate();
-    return;
-  }
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    // Swallow the auto-download rejection (see runUpdateCheck).
-    void result?.downloadPromise?.catch(() => {});
-    const latest = result?.updateInfo?.version;
-    if (latest && latest !== app.getVersion()) {
-      const { response } = await dialog.showMessageBox({
-        type: "info",
-        title: "Update Available",
-        message: `A new version (v${latest}) is available.`,
-        detail: `You are currently running v${app.getVersion()}.`,
-        buttons: ["Download", "Later"],
-        defaultId: 0,
-        cancelId: 1,
-      });
-      if (response === 0) {
-        triggerDownloadUpdate();
-      }
-    } else {
-      dialog.showMessageBox({
-        type: "info",
-        title: "No Updates",
-        message: "You are running the latest version.",
-        detail: `Current version: v${app.getVersion()}`,
-      });
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "";
-    if (READ_ONLY_UPDATE_RE.test(msg) && isRunningFromReadOnlyLocation()) {
-      showMoveToApplicationsDialog();
-    } else {
-      dialog.showMessageBox({
-        type: "error",
-        title: "Update Check Failed",
-        message: "Unable to check for updates. Please try again later.",
-      });
-    }
-  }
-}
-
-function buildUpdateMenuItem(): { label: string; click: () => void } {
-  return updateDownloadState === "downloaded"
-    ? { label: "Restart & Update", click: () => restartAndUpdate() }
-    : { label: "Check for Updates...", click: () => checkForUpdatesFromMenu() };
-}
-
 function buildTrayContextMenu(): Menu {
   return Menu.buildFromTemplate([
     {
@@ -1702,7 +1580,6 @@ function buildTrayContextMenu(): Menu {
       label: "Help",
       click: () => void shell.openExternal("https://freestylevoice.com"),
     },
-    buildUpdateMenuItem(),
     ...(is.dev
       ? [
           { type: "separator" as const },
@@ -1754,7 +1631,6 @@ function createTray(): void {
   });
 }
 
-// Rebuild the application menu so update-related labels stay current.
 function rebuildMenus(): void {
   const appMenu = Menu.buildFromTemplate([
     ...(process.platform === "darwin"
@@ -1769,8 +1645,6 @@ function rebuildMenus(): void {
                 accelerator: "CommandOrControl+,",
                 click: () => openPanelSettings(),
               },
-              { type: "separator" as const },
-              buildUpdateMenuItem(),
               ...(is.dev
                 ? [
                     { type: "separator" as const },
@@ -2303,169 +2177,7 @@ app.whenReady().then(async () => {
 
   createTray();
 
-  // -- Auto-update helpers --
-  const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
-
-  // With autoDownload on, checkForUpdates() also starts the asset download and
-  // exposes it as result.downloadPromise. Swallow that rejection so a transient
-  // download failure (e.g. an expired 403 from the release CDN) is handled by
-  // the "error" event rather than leaking as an unhandled rejection / false
-  // crash report. We avoid checkForUpdatesAndNotify(): it drops the same
-  // rejection internally in a way callers can't intercept, and our own
-  // "update-downloaded" handler already shows the completion notification.
-  function runUpdateCheck(): void {
-    autoUpdater
-      .checkForUpdates()
-      .then((result) => {
-        void result?.downloadPromise?.catch(() => {});
-      })
-      .catch((err) => {
-        log.warn(
-          `Update check failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
-  }
-
-  function startUpdateCheckInterval(): void {
-    if (updateCheckTimer) return;
-    updateCheckTimer = setInterval(runUpdateCheck, UPDATE_CHECK_INTERVAL_MS);
-  }
-
-  // -- Auto-updater with IPC notifications --
-  // Track versions we already notified about so periodic checks don't spam.
-  // Separate flags for "available" vs "downloaded" because both events fire
-  // for the same version and each deserves one notification.
-  let notifiedAvailableVersion: string | null = null;
-  let notifiedDownloadedVersion: string | null = null;
-
-  if (!is.dev) {
-    const autoUpdateEnabled = readSettings().autoUpdate !== false;
-    autoUpdater.autoDownload = autoUpdateEnabled;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.logger = createAppLogger("updater");
-
-    autoUpdater.on("update-available", (info) => {
-      updateAvailableVersion = info.version;
-      if (autoUpdater.autoDownload) {
-        updateDownloadState = "downloading";
-      }
-      broadcastUpdateStatus();
-      // Only show a native notification once per discovered version
-      if (
-        Notification.isSupported() &&
-        notifiedAvailableVersion !== info.version
-      ) {
-        notifiedAvailableVersion = info.version;
-        const note = new Notification({
-          title: "Freestyle Update Available",
-          body: autoUpdater.autoDownload
-            ? `Version ${info.version} is downloading…`
-            : `Version ${info.version} is available. Open settings to download.`,
-        });
-        note.on("click", () => openPanelSettings());
-        note.show();
-      }
-    });
-
-    autoUpdater.on("update-downloaded", (info) => {
-      updateAvailableVersion = info.version;
-      updateDownloadState = "downloaded";
-      broadcastUpdateStatus();
-      // Only show a native notification once per version
-      if (
-        Notification.isSupported() &&
-        notifiedDownloadedVersion !== info.version
-      ) {
-        notifiedDownloadedVersion = info.version;
-        const note = new Notification({
-          title: "Update Ready to Install",
-          body: `Version ${info.version} has been downloaded. Restart to update.`,
-        });
-        note.on("click", () => openPanelSettings());
-        note.show();
-      }
-      // No need to keep polling once the update is downloaded
-      if (updateCheckTimer) {
-        clearInterval(updateCheckTimer);
-        updateCheckTimer = null;
-      }
-      rebuildMenus();
-    });
-
-    autoUpdater.on("error", (err) => {
-      if (updateDownloadState === "downloading") {
-        updateDownloadState = "idle";
-        broadcastUpdateStatus();
-      }
-      const msg = err?.message ?? "Update failed";
-      if (READ_ONLY_UPDATE_RE.test(msg) && isRunningFromReadOnlyLocation()) {
-        showMoveToApplicationsDialog();
-      } else {
-      }
-    });
-
-    if (isRunningFromReadOnlyLocation()) {
-      if (Notification.isSupported()) {
-        const note = new Notification({
-          title: "Move Freestyle to Applications",
-          body: "Freestyle can\u2019t update from this location. Move it to your Applications folder and relaunch.",
-        });
-        note.on("click", () => openPanelSettings());
-        note.show();
-      }
-    } else {
-      runUpdateCheck();
-      startUpdateCheckInterval();
-    }
-  }
-
-  ipcMain.on("updater:download", () => {
-    triggerDownloadUpdate();
-  });
-
-  ipcMain.on("updater:install", () => {
-    restartAndUpdate();
-  });
-
   ipcMain.handle("app:version", () => app.getVersion());
-
-  ipcMain.handle("updater:check", async () => {
-    if (is.dev) return null;
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      // Swallow the auto-download rejection (see runUpdateCheck).
-      void result?.downloadPromise?.catch(() => {});
-      const latest = result?.updateInfo?.version;
-      if (!latest) return null;
-      // Only report an update when the remote version is actually newer
-      if (latest === app.getVersion()) return null;
-      updateAvailableVersion = latest;
-      broadcastUpdateStatus();
-      return { version: latest, downloadState: updateDownloadState };
-    } catch {
-      return null;
-    }
-  });
-
-  ipcMain.handle("updater:status", () => ({
-    version: updateAvailableVersion,
-    downloadState: updateDownloadState,
-  }));
-
-  // -- Auto-update setting IPC --
-  ipcMain.handle("settings:auto-update", () => {
-    return readSettings().autoUpdate !== false;
-  });
-
-  ipcMain.on("settings:set-auto-update", (_event, enabled: boolean) => {
-    writeSettings({ autoUpdate: enabled });
-    if (!is.dev) {
-      autoUpdater.autoDownload = enabled;
-    }
-  });
 
   // -- Launch at startup setting IPC --
   ipcMain.handle("settings:launch-at-startup", () => {
@@ -4600,11 +4312,7 @@ app.on("activate", () => {
 });
 
 // Gracefully shut down the HTTP server and flush Sentry before quitting
-let isUpdaterQuitting = false;
 let isQuitting = false;
-
-let updateDownloadState: "idle" | "downloading" | "downloaded" = "idle";
-let updateAvailableVersion: string | null = null;
 
 function cleanupBeforeQuit(): void {
   // No app-host plugin registry to dispose anymore — every hook (including
@@ -4635,18 +4343,6 @@ function cleanupBeforeQuit(): void {
 }
 
 app.on("before-quit", (event) => {
-  if (isUpdaterQuitting) {
-    try {
-      cleanupBeforeQuit();
-    } catch (err) {
-      log.warn(
-        `cleanup before updater quit failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    return;
-  }
   if (isQuitting) return;
   isQuitting = true;
   event.preventDefault();
